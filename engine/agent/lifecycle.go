@@ -59,8 +59,12 @@ func RunLeased(
 	work func(ctx context.Context) (stats map[string]int64, err error),
 ) (*domain.AgentResult, error) {
 	base.SetState(StateRunning, nil)
+	// One reading of the clock: the event and the result must agree, and a
+	// result without StartedAt makes CompletedAt.Sub(StartedAt) a number in the
+	// millions of hours.
+	started := time.Now()
 	spec.Bus.Publish(event.Event{Type: event.EventAgentStarted, Payload: event.AgentStartedPayload{
-		AgentType: spec.AgentType, StoreID: spec.StoreID, StartedAt: time.Now(),
+		AgentType: spec.AgentType, StoreID: spec.StoreID, StartedAt: started,
 	}})
 
 	runCtx := ctx
@@ -69,7 +73,8 @@ func RunLeased(
 		l, prev, err := lease.Acquire(ctx, spec.Driver, spec.Lease)
 		if err != nil {
 			return failTerminal(base, spec, &domain.AgentResult{
-				AgentType: spec.AgentType, StoreID: spec.StoreID, CompletedAt: time.Now(),
+				AgentType: spec.AgentType, StoreID: spec.StoreID,
+				StartedAt: started, CompletedAt: time.Now(),
 			}, fmt.Errorf("agent %q: acquire lease: %w", spec.AgentType, err))
 		}
 		if prev != nil {
@@ -95,6 +100,7 @@ func RunLeased(
 	res := &domain.AgentResult{
 		AgentType:   spec.AgentType,
 		StoreID:     spec.StoreID,
+		StartedAt:   started,
 		CompletedAt: time.Now(),
 		Stats:       stats,
 	}
