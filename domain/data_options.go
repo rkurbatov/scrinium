@@ -46,6 +46,28 @@ func WithExtHint(key, value string) PutOption {
 	}
 }
 
+// WithParentRefs declares this artifact's source artifacts — edges into the
+// content-addressed DAG (ADR-92/112). The refs land in Manifest.HandleRefs in
+// the given order; position is significant and is preserved by the index.
+//
+// Direction is fixed by the WORM model: a parent is frozen before its child
+// exists, so only the child can carry the reference. "Children of X" is never
+// stored — it is a reverse traversal, which the provenance extension provides.
+//
+// The core validates shape only (count against MaxHandleRefs, non-empty, no
+// duplicates) and never resolves the targets: an edge is a declaration, not a
+// join. Repeated calls replace the previous set rather than appending, so a
+// caller assembling refs incrementally builds its own slice.
+func WithParentRefs(refs ...HandleRef) PutOption {
+	return func(o *PutOptions) {
+		if len(refs) == 0 {
+			o.ParentRefs = nil
+			return
+		}
+		o.ParentRefs = append([]HandleRef(nil), refs...)
+	}
+}
+
 // ApplyPut folds options into a PutOptions. The store calls this to
 // resolve a Put; decorators and test doubles that wrap a Store and
 // need the resolved values (namespace, session, …) use it too.

@@ -34,6 +34,23 @@ type PutOptions struct {
 	// extension a per-call value without the core learning that
 	// extension's vocabulary.
 	ExtHints map[string]string
+
+	// ParentRefs are edges from this artifact to other artifacts (ADR-92/112):
+	// the write path copies them verbatim into Manifest.HandleRefs. The filled
+	// identity slot of a user manifest makes them CONSUMPTION edges — a
+	// derivative holds its sources — so they participate in reference
+	// accounting and in GC policy.
+	//
+	// Edges are DECLARATIVE: the core checks their shape (count, non-empty,
+	// no duplicates) but never that the targets exist. Existence checking
+	// would put an index read on the write path and would break restore,
+	// where a replica of the target may arrive later.
+	//
+	// The core does not know what an edge MEANS. The kind of relation, the
+	// operation and its parameters, reproducibility and outcome — the
+	// production record — live in the x/provenance Ext block, parallel to
+	// this array by position.
+	ParentRefs []HandleRef
 }
 
 // GetOptions is the call context for Store.Get.

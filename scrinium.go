@@ -95,7 +95,11 @@ var (
 	WithBlobType  = domain.WithBlobType  // PutOption
 	WithRetention = domain.WithRetention // PutOption
 	WithRouting   = domain.WithRouting   // PutOption
-	WithColdRead  = domain.WithColdRead  // GetOption
+	// WithParentRefs declares an artifact's source artifacts (edges into the
+	// content-addressed DAG). The production record itself — relation kind,
+	// operation, parameters — comes from the provenance extension's option.
+	WithParentRefs = domain.WithParentRefs // PutOption
+	WithColdRead   = domain.WithColdRead   // GetOption
 )
 
 // Info is assembly metadata an app may surface in diagnostics.
