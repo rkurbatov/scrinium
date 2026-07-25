@@ -15,6 +15,26 @@ type (
 	// orphaned; extensions contribute further roots at runtime.
 	RootView = view.RootView
 
+	// Node is one position in a materialised tree: its filesystem facet, the
+	// artifact behind it when there is one (nil for a directory the tree
+	// derived from paths rather than captured), and its storage facet under a
+	// multistore source.
+	Node = view.Node
+
+	// FilesystemFacet is the schema-agnostic half of a node — name, path,
+	// directory flag, size, mtime. POSIX attributes live in the vfsmeta
+	// schema, not here.
+	FilesystemFacet = view.FilesystemFacet
+
+	// ArtifactFacet is the artifact behind a node, Ext block included.
+	ArtifactFacet = view.ArtifactFacet
+
+	// Seq is a fallible sequence of nodes (the iter.Seq2 pattern) — what a tree
+	// walk returns. Re-exported because a consumer outside the projection tree
+	// (the Extractor, ADR-97) walks a resolved view and cannot name the
+	// internal package that defines it.
+	Seq = view.Seq
+
 	// Stats is a snapshot of projection counters.
 	Stats = view.Stats
 

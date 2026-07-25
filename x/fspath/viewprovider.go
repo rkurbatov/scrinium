@@ -1,6 +1,9 @@
 package fspath
 
 import (
+	"syscall"
+
+	"scrinium.dev/domain"
 	"scrinium.dev/domain/vfsmeta"
 	"scrinium.dev/engine/customindex"
 )
@@ -23,8 +26,24 @@ func (e *CustomIndex) ProvidedViews() []customindex.ProvidedView {
 		Path:     vfsmeta.Resolver,
 		Collide:  true,
 		Orphans:  true,
+		IsDir:    capturedAsDir,
 		Metadata: e,
 	}}
+}
+
+// capturedAsDir reports whether the capture declared this artifact a directory
+// (ADR-114/116). The type bits of the captured POSIX mode are the answer, and
+// this is the only place they are read on the projection's behalf: the view
+// stays schema-agnostic and receives a plain yes or no from its provider.
+//
+// An artifact with no filesystem block, or one whose mode carries no type bits,
+// declares nothing — such a node is a directory only if it has children.
+func capturedAsDir(m domain.Manifest) bool {
+	fs, ok, err := vfsmeta.Decode(m.Ext)
+	if err != nil || !ok {
+		return false
+	}
+	return fs.Mode&syscall.S_IFMT == syscall.S_IFDIR
 }
 
 // Compile-time conformance: fspathindex backs a projection view.

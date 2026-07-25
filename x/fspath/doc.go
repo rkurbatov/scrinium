@@ -18,6 +18,14 @@
 //     specific resource) call LookupByPath. The custom index
 //     keeps a reverse index for O(log N) lookups.
 //
+// The paired agents live beside this package: x/fspath/ingester captures a
+// source tree into the store, and the extractor lays a tree back out. Both
+// depend on this index — the ingester to tell an already-captured path from a
+// new appearance, the extractor to resolve paths — so they belong to the
+// extension rather than to the engine's agent tree (ADR-115). Neither is a
+// factory-built agent: their source or target is a second driver the assembler
+// knows nothing about, so the host constructs them explicitly.
+//
 // fspathindex stores the Ext JSON as-is rather than pre-decoded
 // columns. The schema is versioned (a "version" field in the vfsmeta
 // payload; future versions…); keeping the bytes verbatim lets newer

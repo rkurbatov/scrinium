@@ -26,14 +26,14 @@ import (
 // from Add/Move/applyDelta), and the synchronous bus would deadlock a
 // subscriber that reads the View. The caller flushes *events with emit
 // after releasing the lock.
-func (v *View) applyCollisionInsert(root RootView, path string, m domain.Manifest, rec *artifactRecord, events *[]event.Event) {
+func (v *View) applyCollisionInsert(root RootView, path string, m domain.Manifest, rec *artifactRecord, declaredDir bool, events *[]event.Event) {
 	owners := v.pathOwner[root]
 	tree := v.trees[root]
 
 	currentOwner, claimed := owners[path]
 	if !claimed {
 		owners[path] = m.ArtifactID
-		v.insertFile(tree, path, m)
+		v.insertArtifact(tree, path, m, declaredDir)
 		return
 	}
 
@@ -42,15 +42,17 @@ func (v *View) applyCollisionInsert(root RootView, path string, m domain.Manifes
 		// Should not happen: owner without artifact record.
 		// Recover by treating as unclaimed.
 		owners[path] = m.ArtifactID
-		v.insertFile(tree, path, m)
+		v.insertArtifact(tree, path, m, declaredDir)
 		return
 	}
 
 	if isFresherWinner(m, currentRec.manifest) {
-		// Newcomer wins. Demote previous owner.
+		// Newcomer wins. Demote previous owner. The node is NOT removed and
+		// re-created: it may have children (a directory an artifact occupies,
+		// an archive with members under its path), and removing it would orphan
+		// them. insertArtifact replaces the artifact facet in place (ADR-116).
 		owners[path] = m.ArtifactID
-		v.removeFile(tree, path)
-		v.insertFile(tree, path, m)
+		v.insertArtifact(tree, path, m, declaredDir)
 		v.pushLoser(root, path, currentRec.manifest)
 		*events = append(*events, event.Event{
 			Type: event.EventPathCollision,

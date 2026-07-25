@@ -106,8 +106,13 @@ func (v *View) removeFromCollisionTree(root RootView, id domain.ArtifactID, rec 
 	tree := v.trees[root]
 	owner, claimed := owners[path]
 	if claimed && owner == id {
-		// Drop the file node and try to promote a loser.
-		v.removeFile(tree, path)
+		// Drop the artifact and try to promote a loser. A node with children
+		// survives as a directory instead of being deleted (ADR-116): the path
+		// is a directory regardless of who owns its bytes, and removing it
+		// would orphan the subtree.
+		if !v.detachArtifact(tree, path) {
+			v.removeFile(tree, path)
+		}
 		delete(owners, path)
 		losers := v.pathLosers[root][path]
 		if len(losers) > 0 {
@@ -174,34 +179,77 @@ func (v *View) Move(oldPath, newPath string, m domain.Manifest) error {
 
 // --- Internal helpers ---
 
-// insertFile creates a file node (or updates an existing one) at
-// path in tree, ensuring all parent directories exist as virtual
-// nodes.
+// insertFile places a plain leaf: the shape the intrinsic id-shaped trees
+// (by-artifact, by-date, by-session) always want, where a path can never be a
+// directory an artifact occupies. Anything that can land on a directory goes
+// through insertArtifact.
 //
-// FilesystemFacet carries only the schema-agnostic fields: Name,
-// Path, Size, ModTime, IsDir. POSIX attributes (mode/uid/gid)
-// live in vfsmeta.FileSystem inside Manifest.Ext and are
-// materialised by FSOps at the transport boundary.
-//
-// ModTime here is seeded from m.CreatedAt as a baseline; FSOps
-// overrides with vfsmeta.ModTime when non-zero.
+// FilesystemFacet carries only the schema-agnostic fields: Name, Path, Size,
+// ModTime, IsDir. POSIX attributes (mode/uid/gid) live in vfsmeta.FileSystem
+// inside Manifest.Ext and are materialised by FSOps at the transport boundary.
+// ModTime is seeded from m.CreatedAt; FSOps overrides with vfsmeta.ModTime when
+// non-zero.
 func (v *View) insertFile(tree map[string]*viewNode, path string, m domain.Manifest) {
+	v.insertArtifact(tree, path, m, false)
+}
+
+// insertArtifact places an artifact at path WITHOUT destroying what is already
+// there (ADR-116). It replaces insertFile, which built a leaf and overwrote the
+// node — losing the children of a directory an artifact happens to occupy.
+//
+// Three facts about a node are now independent: it may carry an artifact, it may
+// have children, and it is a DIRECTORY if it has children or the view's provider
+// declared it one. "Directory" is the answer the filesystem projection must give
+// for a path, not a claim that no artifact stands behind it.
+//
+// declaredDir comes from the provided view (customindex.ProvidedView.IsDir) and
+// matters for exactly one case: a captured empty directory, which has no
+// children to speak for it.
+func (v *View) insertArtifact(tree map[string]*viewNode, path string, m domain.Manifest, declaredDir bool) {
 	v.ensureDirs(tree, pathx.Parent(path))
 	name := pathx.LastSegment(path)
+
+	if existing, ok := tree[path]; ok {
+		// Somebody is already here: an intermediate directory synthesised from a
+		// descendant's path, or a previous artifact. Keep the structure and
+		// attach the artifact to it.
+		existing.artifact = artifactFacetFrom(m)
+		existing.fs.IsDir = existing.fs.IsDir || len(existing.children) > 0 || declaredDir
+		if !existing.fs.IsDir {
+			existing.fs.Size = m.OriginalSize
+		}
+		existing.fs.ModTime = m.CreatedAt
+		return
+	}
+
 	tree[path] = &viewNode{
 		fs: FilesystemFacet{
 			Name:    name,
 			Path:    path,
-			IsDir:   false,
+			IsDir:   declaredDir,
 			Size:    m.OriginalSize,
 			ModTime: m.CreatedAt,
 		},
 		artifact: artifactFacetFrom(m),
 	}
-	parent := pathx.Parent(path)
-	if pn, ok := tree[parent]; ok {
+	if pn, ok := tree[pathx.Parent(path)]; ok {
 		pn.children = insertSorted(pn.children, name)
 	}
+}
+
+// detachArtifact strips the artifact from a node but keeps the node when it
+// still has children (ADR-116): the path is a directory regardless of who owns
+// its bytes, and deleting it would orphan the subtree. Reports whether the node
+// survived; a childless node is left to removeFile.
+func (v *View) detachArtifact(tree map[string]*viewNode, path string) bool {
+	n, ok := tree[path]
+	if !ok || len(n.children) == 0 {
+		return false
+	}
+	n.artifact = nil
+	n.fs.IsDir = true
+	n.fs.Size = 0
+	return true
 }
 
 // removeFile deletes the node at path. Empty parent directories

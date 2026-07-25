@@ -150,5 +150,5 @@ func (d *Driver) resolveDir(p string) (string, error) {
 // Capabilities reports the static capability mask. See doc.go for
 // the rationale of each declared flag.
 func (d *Driver) Capabilities() driver.CapabilityMask {
-	return driver.CapBlockAlign4096 | driver.CapWatch
+	return driver.CapBlockAlign4096 | driver.CapWatch | driver.CapDirEntries
 }

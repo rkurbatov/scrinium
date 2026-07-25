@@ -109,6 +109,10 @@ type viewDef struct {
 	// countKey, when non-nil, supplies this view's distinct-cardinality
 	// key so the View maintains the matching Stats counter.
 	countKey func(domain.Manifest) (string, bool)
+	// isDir, when non-nil, declares a manifest to be a directory in this
+	// tree (ADR-116): the half the tree cannot infer, since a captured
+	// empty directory has no children.
+	isDir func(domain.Manifest) bool
 }
 
 // viewNode is the internal node representation. The public Node

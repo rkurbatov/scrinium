@@ -57,6 +57,23 @@ type ProvidedView struct {
 	// other views simply skip a miss.
 	Orphans bool
 
+	// IsDir, when non-nil, declares that a manifest describes a DIRECTORY in
+	// this tree (ADR-116). It does not decide what kind of node the path
+	// becomes — that stays a property of the tree, which reads "a node is a
+	// directory if it has children or was declared one" — it reports what the
+	// capture said about this artifact.
+	//
+	// It exists for the one case the tree cannot infer: a captured EMPTY
+	// directory has no children, so nothing but the declaration distinguishes
+	// it from a file. An artifact that both carries bytes and has descendants
+	// (an archive whose members hang under its path) needs no declaration —
+	// its children speak for themselves, and it keeps its artifact facet
+	// either way.
+	//
+	// nil ⇒ nothing is declared; a node is a directory only if it has
+	// children, which is the behaviour every view had before this field.
+	IsDir func(m domain.Manifest) bool
+
 	// CountKey, when non-nil, supplies this view's distinct-cardinality
 	// key (e.g. the namespace label) so the projection can maintain the
 	// view's count without knowing the concept. nil ⇒ not counted.

@@ -86,6 +86,11 @@ type ProvidedView struct {
 	// CountKey, when set, supplies the distinct-cardinality key the View
 	// uses to maintain this view's Stats counter.
 	CountKey func(domain.Manifest) (string, bool)
+	// IsDir, when set, declares that a manifest describes a directory in
+	// this tree (ADR-116). The tree still decides the node's kind — children
+	// or a declaration make a directory — this only supplies the second half
+	// for a captured empty directory.
+	IsDir func(domain.Manifest) bool
 }
 
 // WithProvidedViews appends extension-contributed view definitions to the

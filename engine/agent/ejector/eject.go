@@ -2,9 +2,6 @@ package ejector
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +14,7 @@ import (
 
 	"scrinium.dev/domain"
 	"scrinium.dev/errs"
+	"scrinium.dev/internal/materialize"
 )
 
 // Eject materialises the whole artifact (fire-and-forget).
@@ -173,57 +171,48 @@ func (a *ejectorAgent) EjectFragment(ctx context.Context, id domain.ArtifactID, 
 	return final, nil
 }
 
-// writeFragment reads [start, end), hashing as it goes, and renames the
+// writeFragment reads [start, end), hashing as it goes, and commits the
 // result to TempDir/<encoded fragment hash>. Existing identical fragment
 // files are reused (deduplicated).
 func (a *ejectorAgent) writeFragment(ctx context.Context, rh domain.ReadHandle, start, end int64) (ch, final, vh string, err error) {
-	suffix, err := randHex()
-	if err != nil {
-		return "", "", "", fmt.Errorf("ejector.Ejector: temp name: %w", err)
-	}
-	tmp := filepath.Join(a.cfg.TempDir, ".tmp-"+suffix)
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
+	// A fragment's name is derived from its own content, so the bytes are staged
+	// first and named afterwards — the staged form of the shared primitive.
+	tmp, hash, err := materialize.Staged(a.cfg.TempDir, func(w io.Writer) error {
+		if start == 0 {
+			if cerr := copyPrefix(w, rh, end); cerr != nil {
+				return cerr
+			}
+			return nil
+		}
+		return copyRangeAt(ctx, w, rh, start, end)
+	})
 	if err != nil {
 		return "", "", "", mapDiskErr(err)
 	}
-	h := sha256.New()
-	mw := io.MultiWriter(f, h)
 
-	if start == 0 {
-		if _, cerr := io.CopyN(mw, rh, end); cerr != nil && cerr != io.EOF {
-			f.Close()
-			os.Remove(tmp)
-			return "", "", "", mapDiskErr(cerr)
-		}
-	} else {
-		if cerr := copyRangeAt(ctx, mw, rh, start, end); cerr != nil {
-			f.Close()
-			os.Remove(tmp)
-			return "", "", "", mapDiskErr(cerr)
-		}
-	}
-	if cerr := f.Sync(); cerr != nil {
-		f.Close()
-		os.Remove(tmp)
-		return "", "", "", mapDiskErr(cerr)
-	}
-	if cerr := f.Close(); cerr != nil {
-		os.Remove(tmp)
-		return "", "", "", mapDiskErr(cerr)
-	}
-
-	vh = hex.EncodeToString(h.Sum(nil))
+	vh = hash
 	ch = "sha256-" + vh
 	final = filepath.Join(a.cfg.TempDir, encodeName(ch))
+
+	// An identical fragment is already materialised: content addressing means
+	// the existing file IS this one, so drop the staged copy.
 	if _, serr := os.Stat(final); serr == nil {
-		os.Remove(tmp) // identical fragment already present
+		materialize.Discard(tmp)
 		return ch, final, vh, nil
 	}
-	if rerr := os.Rename(tmp, final); rerr != nil {
-		os.Remove(tmp)
-		return "", "", "", rerr
+	if cerr := materialize.Commit(tmp, final); cerr != nil {
+		return "", "", "", mapDiskErr(cerr)
 	}
 	return ch, final, vh, nil
+}
+
+// copyPrefix copies the first n bytes of rh, treating a short read as the whole
+// of what there was — a fragment ending at or past EOF is legitimate.
+func copyPrefix(w io.Writer, rh domain.ReadHandle, n int64) error {
+	if _, err := io.CopyN(w, rh, n); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }
 
 // copyRangeAt copies [start, end) from a random-access ReadHandle.
@@ -255,38 +244,16 @@ func copyRangeAt(ctx context.Context, w io.Writer, rh domain.ReadHandle, start, 
 	return nil
 }
 
-// atomicWrite writes via a private temp file, fsync, and rename into
-// final. Returns the sha256 hex of the bytes written.
-func (a *ejectorAgent) atomicWrite(final string, fill func(w io.Writer) error) (string, error) {
-	suffix, err := randHex()
-	if err != nil {
-		return "", fmt.Errorf("ejector.Ejector: temp name: %w", err)
-	}
-	tmp := filepath.Join(a.cfg.TempDir, ".tmp-"+suffix)
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
+// atomicWrite writes fill's bytes to final and returns the sha256 hex of what
+// landed. The write is the primitive shared with the Extractor (ADR-97
+// INV-97-5); what stays here is the ejector's dialect — disk errors mapped onto
+// its sentinels, and TempDir as both staging and final directory.
+func (a *ejectorAgent) atomicWrite(final string, fill materialize.Fill) (string, error) {
+	hash, err := materialize.File(final, a.cfg.TempDir, fill)
 	if err != nil {
 		return "", mapDiskErr(err)
 	}
-	h := sha256.New()
-	if cerr := fill(io.MultiWriter(f, h)); cerr != nil {
-		f.Close()
-		os.Remove(tmp)
-		return "", mapDiskErr(cerr)
-	}
-	if cerr := f.Sync(); cerr != nil {
-		f.Close()
-		os.Remove(tmp)
-		return "", mapDiskErr(cerr)
-	}
-	if cerr := f.Close(); cerr != nil {
-		os.Remove(tmp)
-		return "", mapDiskErr(cerr)
-	}
-	if rerr := os.Rename(tmp, final); rerr != nil {
-		os.Remove(tmp)
-		return "", rerr
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return hash, nil
 }
 
 // reuseOK reports whether an existing entry may be reused. With
@@ -295,16 +262,13 @@ func (a *ejectorAgent) reuseOK(e *entry) bool {
 	if !a.cfg.VerifyOnReuse {
 		return true
 	}
-	f, err := os.Open(e.path)
+	// The same hash the write reported, computed the same way — hence the shared
+	// helper rather than a second copy of "open, sha256, hex".
+	sum, err := materialize.Hash(e.path)
 	if err != nil {
 		return false
 	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return false
-	}
-	return hex.EncodeToString(h.Sum(nil)) == e.verifyHash
+	return sum == e.verifyHash
 }
 
 // release decrements a holder count.
@@ -337,14 +301,6 @@ func (h *ejectHandle) Release() error {
 // collide; hex hashes are unaffected.
 func encodeName(ch string) string {
 	return strings.NewReplacer("/", "_", "+", "-").Replace(ch)
-}
-
-func randHex() (string, error) {
-	var b [12]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b[:]), nil
 }
 
 func mapDiskErr(err error) error {
