@@ -122,6 +122,7 @@ func (v *View) buildViewDefs() []viewDef {
 			collide:  p.Collide,
 			orphans:  p.Orphans,
 			countKey: p.CountKey,
+			isDir:    p.IsDir,
 		})
 	}
 	return defs

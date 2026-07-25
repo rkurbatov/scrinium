@@ -60,6 +60,7 @@ func buildView(ctx context.Context, backend Backend, fsidx MetadataIndex, cfg Co
 				Collide:  p.Collide,
 				Orphans:  p.Orphans,
 				CountKey: p.CountKey,
+				IsDir:    p.IsDir,
 			})
 		}
 		opts = append(opts, view.WithProvidedViews(pvs...))

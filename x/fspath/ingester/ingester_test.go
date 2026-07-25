@@ -73,7 +73,7 @@ func newHarness(t *testing.T, cfg ingester.Config) *harness {
 		t.Fatalf("scoped system store: %v", err)
 	}
 
-	source := t.TempDir()
+	source := keepOnFail(t, "source")
 	src, err := localfs.New(source)
 	if err != nil {
 		t.Fatalf("source driver: %v", err)
@@ -93,6 +93,25 @@ func newHarness(t *testing.T, cfg ingester.Config) *harness {
 // can assert on New's own refusals.
 func (h *harness) build(cfg ingester.Config) (ingester.Ingester, error) {
 	return ingester.New(h.src, h.store, h.paths, h.cursor, h.bus, cfg)
+}
+
+// keepOnFail makes a directory that is removed only when the test passes: the
+// source tree is the evidence of a capture failure, and t.TempDir would delete
+// it regardless of the verdict.
+func keepOnFail(t *testing.T, name string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "scrinium-"+name+"-")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("%s tree kept for inspection: %s", name, dir)
+			return
+		}
+		_ = os.RemoveAll(dir)
+	})
+	return dir
 }
 
 // writeAged writes a file and backdates it, so the settle window (which is

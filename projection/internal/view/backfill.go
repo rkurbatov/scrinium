@@ -176,6 +176,10 @@ func (v *View) indexArtifact(m domain.Manifest, duringBackfill bool, events *[]e
 		if d.path != nil {
 			path, ok = d.path(m)
 		}
+		// Whether the capture declared this artifact a directory. The tree
+		// still decides the node's kind (children or a declaration); this is
+		// the half it cannot infer for an empty captured directory (ADR-116).
+		declaredDir := d.isDir != nil && d.isDir(m)
 		if !ok {
 			// No placement in this view. Orphaning views (by-path)
 			// send the artifact to the orphan tree, or to a synthetic
@@ -187,14 +191,16 @@ func (v *View) indexArtifact(m domain.Manifest, duringBackfill bool, events *[]e
 				sp := v.syntheticPath(m)
 				rec.paths[d.root] = sp
 				if d.collide {
-					v.applyCollisionInsert(d.root, sp, m, rec, events)
+					v.applyCollisionInsert(d.root, sp, m, rec, declaredDir, events)
 				} else {
-					v.insertFile(v.trees[d.root], sp, m)
+					v.insertArtifact(v.trees[d.root], sp, m, declaredDir)
 				}
 			} else {
 				op := byArtifactPath(m.ArtifactID)
 				rec.paths[RootByOrphaned] = op
-				v.insertFile(v.trees[RootByOrphaned], op, m)
+				// The orphan tree is id-shaped: a synthetic leaf per artifact,
+				// where a directory declaration has no meaning.
+				v.insertArtifact(v.trees[RootByOrphaned], op, m, false)
 				v.Stats.OrphanedCount++
 			}
 			continue
@@ -202,9 +208,9 @@ func (v *View) indexArtifact(m domain.Manifest, duringBackfill bool, events *[]e
 
 		rec.paths[d.root] = path
 		if d.collide {
-			v.applyCollisionInsert(d.root, path, m, rec, events)
+			v.applyCollisionInsert(d.root, path, m, rec, declaredDir, events)
 		} else {
-			v.insertFile(v.trees[d.root], path, m)
+			v.insertArtifact(v.trees[d.root], path, m, declaredDir)
 		}
 		if d.countKey != nil {
 			if key, kok := d.countKey(m); kok {

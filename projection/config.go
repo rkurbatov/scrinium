@@ -100,4 +100,10 @@ type ProvidedView struct {
 	// CountKey, when non-nil, supplies the view's distinct-cardinality key
 	// so the View can maintain the view's count. nil ⇒ not counted.
 	CountKey func(m domain.Manifest) (key string, ok bool)
+
+	// IsDir, when non-nil, declares that a manifest describes a directory in
+	// this tree (ADR-116) — needed for a captured EMPTY directory, which has no
+	// children to speak for it. It does not decide the node's kind: a node is a
+	// directory if it has children or was declared one.
+	IsDir func(m domain.Manifest) bool
 }
