@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"scrinium.dev/domain"
+	"scrinium.dev/domain/extpocket"
 	"scrinium.dev/engine/customindex"
 )
 
@@ -191,19 +192,21 @@ func nsidKey(m domain.Manifest) (string, bool) {
 // one key in the shared Ext JSON object (other extensions keep their own
 // keys alongside it); an absent or empty "nsid" means "no namespace".
 func nsidOf(ext json.RawMessage) (NamespaceID, bool, error) {
-	if len(ext) == 0 {
-		return "", false, nil
-	}
-	var probe struct {
-		NSID NamespaceID `json:"nsid"`
-	}
-	if err := json.Unmarshal(ext, &probe); err != nil {
+	raw, ok, err := extpocket.Get(ext, nsidField)
+	if err != nil {
 		return "", false, err
 	}
-	if probe.NSID == "" {
+	if !ok {
 		return "", false, nil
 	}
-	return probe.NSID, true, nil
+	var id NamespaceID
+	if err := json.Unmarshal(raw, &id); err != nil {
+		return "", false, err
+	}
+	if id == "" {
+		return "", false, nil
+	}
+	return id, true, nil
 }
 
 // Compile-time conformance: the namespace index is a CustomIndex that

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"scrinium.dev/domain"
+	"scrinium.dev/domain/extpocket"
+	"scrinium.dev/domain/vfsmeta"
 )
 
 // DefaultEvictRel is the relation kind of a receipt's edge to the artifact it
@@ -55,10 +57,13 @@ type Receipt struct {
 	// mass decision stays attributable to the policy that made it.
 	Rule string `json:"rule,omitempty"`
 
-	// DecidedBy and DecidedAt record who decided and when. A deletion that
-	// cannot be attributed is indistinguishable from data loss.
-	DecidedBy string    `json:"decided_by,omitempty"`
-	DecidedAt time.Time `json:"decided_at,omitempty"`
+	// DecidedBy records who decided. A deletion that cannot be attributed is
+	// indistinguishable from data loss.
+	//
+	// WHEN it was decided is not stored here: the receipt is itself an artifact,
+	// and its manifest already carries CreatedAt — which a reader holds in the
+	// same response as this document. A second copy could only drift from it.
+	DecidedBy string `json:"decided_by,omitempty"`
 }
 
 // ReceiptSpec is what a caller supplies to evict an artifact. The evicted
@@ -77,9 +82,6 @@ type ReceiptSpec struct {
 
 	// DecidedBy is required: who decided.
 	DecidedBy string
-
-	// DecidedAt defaults to now when zero.
-	DecidedAt time.Time
 }
 
 func (s ReceiptSpec) validate() error {
@@ -96,10 +98,6 @@ func (s ReceiptSpec) validate() error {
 // manifest. Path and MIME come from the filesystem schema when the artifact
 // carried one; their absence is not an error — not every artifact has a path.
 func receiptFor(spec ReceiptSpec, m domain.Manifest) Receipt {
-	at := spec.DecidedAt
-	if at.IsZero() {
-		at = time.Now().UTC()
-	}
 	ev := EvictedArtifact{
 		Artifact:    m.ArtifactID,
 		ContentHash: m.ContentHash,
@@ -115,27 +113,25 @@ func receiptFor(spec ReceiptSpec, m domain.Manifest) Receipt {
 		Reason:    spec.Reason,
 		Rule:      spec.Rule,
 		DecidedBy: spec.DecidedBy,
-		DecidedAt: at,
 	}
 }
 
-// pathAndMIME reads the filesystem schema's path and MIME out of Ext without
-// importing the schema package: the receipt is a diagnostic document, and a
-// missing or foreign-shaped block simply yields empty strings.
+// pathAndMIME lifts the filesystem schema's path and MIME out of Ext for a human
+// reader. The receipt is a diagnostic document, so a missing or foreign-shaped
+// block simply yields empty strings.
 func pathAndMIME(ext json.RawMessage) (string, string) {
-	if len(ext) == 0 {
+	raw, ok, err := extpocket.Get(ext, vfsmeta.Key)
+	if err != nil || !ok {
 		return "", ""
 	}
 	var probe struct {
-		VFS struct {
-			Path string `json:"path"`
-			MIME string `json:"mime"`
-		} `json:"vfsmeta"`
+		Path string `json:"path"`
+		MIME string `json:"mime"`
 	}
-	if err := json.Unmarshal(ext, &probe); err != nil {
+	if err := json.Unmarshal(raw, &probe); err != nil {
 		return "", ""
 	}
-	return probe.VFS.Path, probe.VFS.MIME
+	return probe.Path, probe.MIME
 }
 
 // DecodeReceipt parses a receipt document read from a receipt artifact's

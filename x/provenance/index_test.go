@@ -336,7 +336,7 @@ func TestIndex_FailedAttemptIsAnEdgeButNotAResult(t *testing.T) {
 	if has, _ := idx.HasResultOf(ctx, src, "text"); has {
 		t.Error("HasResultOf true for a failed attempt only")
 	}
-	if has, _ := idx.HasChildren(ctx, src); !has {
+	if has, _ := idx.HasChildOf(ctx, src, ""); !has {
 		t.Error("a failed attempt should still pin its source")
 	}
 }

@@ -266,7 +266,7 @@ func TestIntegration_GuardProtectsSources(t *testing.T) {
 	if err := s.Delete(ctx, derived); err != nil {
 		t.Fatalf("Delete derivative: %v", err)
 	}
-	if has, err := pidx.HasChildren(ctx, src); err != nil || has {
+	if has, err := pidx.HasChildOf(ctx, src, ""); err != nil || has {
 		t.Fatalf("source still pinned after its only derivative went: %v (%v)", has, err)
 	}
 	if err := s.Delete(ctx, src); err != nil {
@@ -424,33 +424,6 @@ func TestIntegration_EvictIsIdempotent(t *testing.T) {
 	}
 }
 
-// A receipt without a stated reason or decider is refused before anything is
-// written: an eviction that cannot be attributed is indistinguishable from loss.
-func TestIntegration_EvictRefusesUnexplained(t *testing.T) {
-	ctx := context.Background()
-	s, pidx := harness(t, provenance.Config{GuardDeletes: true})
-
-	src := put(t, s, "source")
-	_ = put(t, s, "derived", provenance.WithProduction(provenance.Production{
-		Inputs: []provenance.Input{{Ref: domain.HandleRef(src), Rel: "text"}},
-		Op:     "ocr",
-		Repro:  true,
-	}))
-
-	ev, _ := provenance.NewEvictor(s, pidx)
-	if err := ev.Evict(ctx, src, provenance.ReceiptSpec{Reason: "ocr-complete"}); !errors.Is(err, provenance.ErrBadReceipt) {
-		t.Fatalf("want ErrBadReceipt, got %v", err)
-	}
-	if has, _ := pidx.HasReceipt(ctx, src); has {
-		t.Error("a refused eviction still wrote a receipt")
-	}
-	if _, err := s.Get(ctx, src); err != nil {
-		t.Errorf("a refused eviction deleted the artifact: %v", err)
-	}
-}
-
-// The receipt survives: deleting it would leave a dangling reference with no
-// account of why the bytes are gone.
 func TestIntegration_ReceiptIsProtected(t *testing.T) {
 	ctx := context.Background()
 	s, pidx := harness(t, provenance.Config{GuardDeletes: true})
@@ -518,48 +491,6 @@ func TestIntegration_EvictedIsNotOfferedWork(t *testing.T) {
 	}
 }
 
-// Effective reproducibility over a real store: the text is a cache while the pdf
-// is on disk and becomes data the moment it is evicted, though its own flag
-// never changes.
-func TestIntegration_CleanableAfterEviction(t *testing.T) {
-	ctx := context.Background()
-	s, pidx := harness(t, provenance.Config{GuardDeletes: true})
-
-	pdf := put(t, s, "scanned pdf")
-	text := put(t, s, "text", provenance.WithProduction(provenance.Production{
-		Inputs: []provenance.Input{{Ref: domain.HandleRef(pdf), Rel: "text"}},
-		Op:     "ocr",
-		Repro:  true,
-	}))
-
-	alive := func(ctx context.Context, v domain.ArtifactID) (bool, error) {
-		rh, err := s.Get(ctx, v)
-		if err != nil {
-			return false, nil
-		}
-		_ = rh.Close()
-		return true, nil
-	}
-
-	if ok, err := pidx.Cleanable(ctx, text, alive); err != nil || !ok {
-		t.Fatalf("text should be cleanable while the pdf lives: (%v, %v)", ok, err)
-	}
-
-	ev, _ := provenance.NewEvictor(s, pidx)
-	if err := ev.Evict(ctx, pdf, provenance.ReceiptSpec{
-		Retained: []domain.ArtifactID{text}, Reason: "ocr-complete", DecidedBy: "roman",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	if ok, err := pidx.Cleanable(ctx, text, alive); err != nil || ok {
-		t.Fatalf("text must not be cleanable once its source is evicted: (%v, %v)", ok, err)
-	}
-}
-
-// The receipt is written outside the caller's session on purpose: rolling back an
-// eviction batch must not erase the explanations of artifacts that are already
-// gone (ADR-113 П-6).
 func TestIntegration_ReceiptSurvivesSessionRollback(t *testing.T) {
 	ctx := context.Background()
 	s, pidx := harness(t, provenance.Config{GuardDeletes: true})

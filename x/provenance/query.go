@@ -17,19 +17,10 @@ type Edge struct {
 	Pos int
 }
 
-// HoleQuery describes work that is owed. A hole is not a queue entry: nothing is
-// enqueued, leased or acknowledged, and a crash leaves nothing to clean up — the
-// hole is simply still there on the next pass, and stops being reported the
-// moment the derivative exists.
-//
-// Candidates are named in one of two ways, and exactly one must be given,
-// because the two describe different pipeline shapes:
-//
-//   - Is — the artifact was itself produced as this kind. This is the chained
-//     shape: chunks derive from the text, which derives from the scan, so "is a
-//     text, has no chunks" is the question stage three asks.
-//   - Has — the artifact has a derivative of this kind. This is the star shape,
-//     where everything hangs off the original: "has a text, has no thumbnail".
+// HoleQuery describes work that is owed. Exactly one of Is/Has must be given:
+// they select candidates differently because pipelines have two shapes — chained
+// (chunks come from the text, so "is a text, has no chunks") and star
+// (everything hangs off the original, so "has a text, has no thumbnail").
 type HoleQuery struct {
 	// Is selects candidates by the kind they were produced as.
 	Is string
@@ -95,10 +86,9 @@ func (e *Index) eachParent(id domain.ArtifactID, cb func(Edge) error) error {
 	})
 }
 
-// Children returns everything recorded as produced from this artifact, including
-// failed attempts: a failure is part of a source's provenance, and hiding it
-// would make the graph lie. For "what actually came out of it" use Results.
-// rel="" means every kind.
+// Children returns everything recorded as produced from this artifact, failed
+// attempts included: hiding them would make the graph lie. For "what actually
+// came out" use Results. rel="" means every kind.
 func (e *Index) Children(ctx context.Context, id domain.ArtifactID, rel string) ([]domain.ArtifactID, error) {
 	if err := e.ready(); err != nil {
 		return nil, err
@@ -145,12 +135,6 @@ func (e *Index) HasChildOf(ctx context.Context, id domain.ArtifactID, rel string
 // hole, or a stage that keeps breaking would look complete.
 func (e *Index) HasResultOf(ctx context.Context, id domain.ArtifactID, rel string) (bool, error) {
 	return e.probeChildren(id, rel, func(o Outcome) bool { return o == OutcomeOK })
-}
-
-// HasChildren satisfies the wrapper's delete guard: any derivative at all pins
-// its source.
-func (e *Index) HasChildren(ctx context.Context, id domain.ArtifactID) (bool, error) {
-	return e.HasChildOf(ctx, id, "")
 }
 
 // probeChildren stops at the first child whose outcome satisfies want.
@@ -253,9 +237,8 @@ func (e *Index) walk(
 
 // --- Planning ---
 
-// Holes streams the artifacts that owe work, per the query. It is the whole state
-// a pipeline stage needs: no queue, no cursor, no lease — the answer is derived
-// from the graph each time it is asked.
+// Holes streams the artifacts that owe work. It is the whole state a pipeline
+// stage needs: no queue, no cursor, no lease — the answer is derived each time.
 func (e *Index) Holes(ctx context.Context, q HoleQuery, cb func(domain.ArtifactID) error) error {
 	if err := e.ready(); err != nil {
 		return err
@@ -367,9 +350,14 @@ func (e *Index) Done(ctx context.Context, pkey string, inputs []domain.HandleRef
 }
 
 // Failures counts recorded failed attempts against a source: attempts to produce
-// rel from id, optionally narrowed to one parameter set (pkey="" — any). The
-// count is derived from the failure records themselves, so it cannot drift from
-// them.
+// rel from id, optionally narrowed to one parameter set (pkey="" — any).
+//
+// The count is derived by scanning the failure rows rather than kept in the
+// substrate's counter (Substrate.Inc), and that is a deliberate trade. A counter
+// would answer in one read, but it would be a second source of truth able to
+// drift from the records it summarises; a scan is always exact and needs no
+// repair. If this ever becomes hot, Inc is the sanctioned upgrade — it is
+// transactional inside Index, where the failures are written.
 func (e *Index) Failures(ctx context.Context, id domain.ArtifactID, rel, pkey string) (int, error) {
 	if err := e.ready(); err != nil {
 		return 0, err
@@ -388,14 +376,10 @@ func (e *Index) Failures(ctx context.Context, id domain.ArtifactID, rel, pkey st
 
 // --- Currency ---
 
-// Head resolves a chain of replacements to its current end: the artifact that
-// supersedes this one, and so on, until nothing supersedes it. An artifact that
-// was never superseded is its own head. Eviction edges are a different kind and
-// are not followed here — a receipt for a deletion is not a successor.
-//
-// A fork — two artifacts claiming to replace the same one — returns ErrForked
-// with the candidates. Detecting it is mechanical; choosing between them is a
-// policy this extension does not own.
+// Head resolves a chain of replacements to its end; an artifact nobody replaced
+// is its own head. Eviction edges are not followed — a receipt is not a
+// successor. A fork returns ErrForked with the candidates: detecting it is
+// mechanical, choosing between them is not this extension's policy.
 func (e *Index) Head(ctx context.Context, id domain.ArtifactID) (domain.ArtifactID, error) {
 	if err := e.ready(); err != nil {
 		return "", err

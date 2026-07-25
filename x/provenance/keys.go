@@ -1,6 +1,8 @@
 package provenance
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strconv"
 	"strings"
 
@@ -85,12 +87,16 @@ func boolStr(v bool) string {
 	return "0"
 }
 
+// inputsKeyOf is the companion of ParamsKey over the edge targets, in order:
+// together they answer "this exact work on these exact inputs". Local to the
+// index — a caller never needs to spell it, since Done takes the inputs.
 func inputsKeyOf(refs []domain.HandleRef) string {
-	strs := make([]string, len(refs))
-	for i, r := range refs {
-		strs[i] = string(r)
+	h := sha256.New()
+	for _, r := range refs {
+		h.Write([]byte(r))
+		h.Write([]byte{0})
 	}
-	return InputsKey(strs)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // splitRecord parses a records row ("pkey ‖ outcome ‖ inputs-key ‖ repro").

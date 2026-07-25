@@ -6,7 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
+
+	"scrinium.dev/domain/extpocket"
 )
 
 // Key is the Ext schema key this extension owns: Manifest.Ext["provenance"].
@@ -125,15 +126,11 @@ func (b Block) Validate(edges int) error {
 // written without this extension, and not an error. A block of an unknown
 // future version also returns ok=false rather than a guess.
 func Decode(ext json.RawMessage) (Block, bool, error) {
-	if len(ext) == 0 {
-		return Block{}, false, nil
+	raw, ok, err := extpocket.Get(ext, Key)
+	if err != nil {
+		return Block{}, false, fmt.Errorf("provenance: %w", err)
 	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(ext, &obj); err != nil {
-		return Block{}, false, fmt.Errorf("provenance: Ext is not a JSON object: %w", err)
-	}
-	raw, ok := obj[Key]
-	if !ok || len(raw) == 0 {
+	if !ok {
 		return Block{}, false, nil
 	}
 	var b Block
@@ -147,21 +144,17 @@ func Decode(ext json.RawMessage) (Block, bool, error) {
 }
 
 // stamp writes b into ext under Key, preserving every other key already there
-// (a vfsmeta payload, an nsid stamp). An empty Ext becomes a fresh object
-// carrying just this block.
+// (a vfsmeta payload, an nsid stamp).
 func stamp(ext json.RawMessage, b Block) (json.RawMessage, error) {
-	obj := map[string]json.RawMessage{}
-	if len(ext) > 0 {
-		if err := json.Unmarshal(ext, &obj); err != nil {
-			return nil, fmt.Errorf("provenance: artifact Ext is not a JSON object: %w", err)
-		}
-	}
 	blockJSON, err := json.Marshal(b)
 	if err != nil {
 		return nil, fmt.Errorf("provenance: encode block: %w", err)
 	}
-	obj[Key] = blockJSON
-	return json.Marshal(obj)
+	out, err := extpocket.Put(ext, Key, blockJSON)
+	if err != nil {
+		return nil, fmt.Errorf("provenance: %w", err)
+	}
+	return out, nil
 }
 
 // ParamsKey is the idempotency key for a unit of work: a hash over the
@@ -184,80 +177,21 @@ func ParamsKey(op string, params json.RawMessage) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// InputsKey is the companion key over the edge targets, in order. Together
-// with ParamsKey it answers "this exact work on these exact inputs".
-func InputsKey(refs []string) string {
-	h := sha256.New()
-	for _, r := range refs {
-		h.Write([]byte(r))
-		h.Write([]byte{0})
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// canonJSON rewrites v in a canonical form: object keys sorted, no
-// insignificant whitespace, arrays left in order (their order is data). Empty
-// input canonicalizes to "null" so an absent parameter set still hashes.
+// canonJSON rewrites v in a canonical form: object keys sorted, no insignificant
+// whitespace, arrays left in order (their order is data). Empty input
+// canonicalizes to "null" so an absent parameter set still hashes.
+//
+// The standard encoder does the work: it sorts map keys, and UseNumber keeps
+// numeric literals verbatim, so 1 and 1.0 stay different parameters.
 func canonJSON(v json.RawMessage) ([]byte, error) {
 	if len(bytes.TrimSpace(v)) == 0 {
 		return []byte("null"), nil
 	}
 	var any interface{}
 	dec := json.NewDecoder(bytes.NewReader(v))
-	dec.UseNumber() // preserve numeric literals: 1.0 must not become 1
+	dec.UseNumber()
 	if err := dec.Decode(&any); err != nil {
 		return nil, err
 	}
-	var buf bytes.Buffer
-	if err := writeCanon(&buf, any); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func writeCanon(buf *bytes.Buffer, v interface{}) error {
-	switch t := v.(type) {
-	case map[string]interface{}:
-		keys := make([]string, 0, len(t))
-		for k := range t {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		buf.WriteByte('{')
-		for i, k := range keys {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			kb, err := json.Marshal(k)
-			if err != nil {
-				return err
-			}
-			buf.Write(kb)
-			buf.WriteByte(':')
-			if err := writeCanon(buf, t[k]); err != nil {
-				return err
-			}
-		}
-		buf.WriteByte('}')
-		return nil
-	case []interface{}:
-		buf.WriteByte('[')
-		for i, e := range t {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			if err := writeCanon(buf, e); err != nil {
-				return err
-			}
-		}
-		buf.WriteByte(']')
-		return nil
-	default:
-		b, err := json.Marshal(t)
-		if err != nil {
-			return err
-		}
-		buf.Write(b)
-		return nil
-	}
+	return json.Marshal(any)
 }

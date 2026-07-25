@@ -52,7 +52,7 @@ type fakeLookup struct {
 	err      error
 }
 
-func (l fakeLookup) HasChildren(_ context.Context, id domain.ArtifactID) (bool, error) {
+func (l fakeLookup) HasChildOf(_ context.Context, id domain.ArtifactID, _ string) (bool, error) {
 	return l.children[id], l.err
 }
 

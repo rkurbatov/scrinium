@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"scrinium.dev/domain"
+	"scrinium.dev/domain/extpocket"
 	"scrinium.dev/errs"
 )
 
@@ -125,14 +126,11 @@ func Embed(ext json.RawMessage, fs FileSystem) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	obj := map[string]json.RawMessage{}
-	if len(ext) > 0 {
-		if err := json.Unmarshal(ext, &obj); err != nil {
-			return nil, fmt.Errorf("vfsmeta.Embed: Ext is not a JSON object: %w", err)
-		}
+	out, err := extpocket.Put(ext, Key, payload)
+	if err != nil {
+		return nil, fmt.Errorf("vfsmeta.Embed: %w", err)
 	}
-	obj[Key] = payload
-	return json.Marshal(obj)
+	return out, nil
 }
 
 // Decode reads the vfsmeta payload from a Manifest.Ext map. The triple
@@ -152,14 +150,11 @@ func Decode(ext json.RawMessage) (FileSystem, bool, error) {
 	if len(ext) == 0 {
 		return FileSystem{}, false, nil
 	}
-	// Pull our key out of the Ext map; ignore foreign keys. A
-	// non-object Ext, or no "vfsmeta" key, means "not us".
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(ext, &obj); err != nil {
-		return FileSystem{}, false, nil
-	}
-	raw, ok := obj[Key]
-	if !ok || len(raw) == 0 {
+	// Pull our key out of the Ext map; ignore foreign keys. A non-object Ext,
+	// or no "vfsmeta" key, means "not us" — this schema is deliberately
+	// permissive there, so the extpocket error is dropped rather than surfaced.
+	raw, ok, _ := extpocket.Get(ext, Key)
+	if !ok {
 		return FileSystem{}, false, nil
 	}
 	var w wireFormat

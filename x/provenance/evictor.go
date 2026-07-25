@@ -42,20 +42,16 @@ func NewEvictor(s store.DataStore, idx *Index) (*Evictor, error) {
 
 // Evict writes the receipt and then deletes the artifact.
 //
-// The order is load-bearing and its failure direction is the safe one: a crash
-// between the two leaves a receipt for an artifact that still exists, which is
-// harmless and self-correcting on a retry. The reverse order would leave a
-// dangling reference with no explanation — the state this mechanism exists to
-// prevent.
+// The order is load-bearing and fails in the safe direction: a crash between the
+// two leaves a receipt for an artifact that still exists, which a retry fixes.
+// The reverse would leave a dangling reference with no explanation.
 //
-// Idempotent: an artifact that already carries a receipt does not get a second
-// one, so a retry after a failed delete (retention still active, deletion
-// policy, a crash) re-attempts only the deletion. A receipt is a standing
-// decision — when retention expires, the delete goes through.
+// Idempotent — an artifact that already carries a receipt does not get a second
+// one, so a retry after a refused delete (retention, deletion policy) re-attempts
+// only the deletion; the receipt is a standing decision.
 //
-// The receipt is written WITHOUT the caller's session on purpose: rolling back an
-// eviction batch would otherwise delete the explanations of artifacts that are
-// already gone.
+// The receipt is written WITHOUT the caller's session: rolling back an eviction
+// batch must not delete the explanations of artifacts already gone.
 func (e *Evictor) Evict(ctx context.Context, id domain.ArtifactID, spec ReceiptSpec) error {
 	if err := spec.validate(); err != nil {
 		return err

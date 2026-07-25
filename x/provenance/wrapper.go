@@ -20,7 +20,7 @@ const extensionName = Key
 // the index gets a wrapper that stamps but does not guard, explicitly rather
 // than by accident.
 type derivativeLookup interface {
-	HasChildren(ctx context.Context, id domain.ArtifactID) (bool, error)
+	HasChildOf(ctx context.Context, id domain.ArtifactID, rel string) (bool, error)
 	HasReceipt(ctx context.Context, id domain.ArtifactID) (bool, error)
 	IsReceipt(ctx context.Context, id domain.ArtifactID) (bool, error)
 }
@@ -134,7 +134,7 @@ func (s *provStore) Delete(ctx context.Context, id domain.ArtifactID) error {
 		return fmt.Errorf("%s: %w", id, ErrReceiptProtected)
 	}
 
-	has, err := s.lookup.HasChildren(ctx, id)
+	has, err := s.lookup.HasChildOf(ctx, id, "")
 	if err != nil {
 		return fmt.Errorf("provenance: check derivatives of %s: %w", id, err)
 	}

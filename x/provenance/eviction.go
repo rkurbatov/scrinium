@@ -11,9 +11,9 @@ import (
 // The index side of eviction (ADR-113): recognising a receipt, and computing
 // EFFECTIVE reproducibility once sources start disappearing.
 
-// Receipt returns the receipt artifact explaining this artifact's eviction, if
-// one exists. A traversal that hit an unresolvable handle asks this: the answer
-// distinguishes a deliberate decision from data loss.
+// Receipt returns the receipt explaining this artifact's eviction, if any. A
+// traversal that hit an unresolvable handle asks this: the answer tells a
+// deliberate decision from data loss.
 func (e *Index) Receipt(ctx context.Context, id domain.ArtifactID) (domain.ArtifactID, bool, error) {
 	if err := e.ready(); err != nil {
 		return "", false, err
@@ -37,10 +37,9 @@ func (e *Index) HasReceipt(ctx context.Context, id domain.ArtifactID) (bool, err
 	return has, err
 }
 
-// IsReceipt reports whether this artifact IS a receipt: it carries an eviction
-// edge to the artifact it explains. Receipts are not deletable, so the guard
-// needs to recognise one. It stops at the first eviction edge rather than
-// collecting the artifact's parents.
+// IsReceipt reports whether this artifact IS a receipt — it carries an eviction
+// edge — which the guard needs, since receipts are not deletable. Stops at the
+// first such edge.
 func (e *Index) IsReceipt(ctx context.Context, id domain.ArtifactID) (bool, error) {
 	if err := e.ready(); err != nil {
 		return false, err

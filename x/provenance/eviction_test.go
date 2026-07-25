@@ -190,7 +190,7 @@ type evictLookup struct {
 	isReceipt map[domain.ArtifactID]bool
 }
 
-func (l *evictLookup) HasChildren(_ context.Context, id domain.ArtifactID) (bool, error) {
+func (l *evictLookup) HasChildOf(_ context.Context, id domain.ArtifactID, _ string) (bool, error) {
 	return l.children[id], nil
 }
 func (l *evictLookup) HasReceipt(_ context.Context, id domain.ArtifactID) (bool, error) {
@@ -246,7 +246,7 @@ func TestReceipt_RoundTripAndVersioning(t *testing.T) {
 	if r.Evicted.Path != "books/foo.pdf" || r.Evicted.MIME != "application/pdf" {
 		t.Errorf("path/mime not carried: %+v", r.Evicted)
 	}
-	if r.DecidedBy != "roman" || r.DecidedAt.IsZero() {
+	if r.DecidedBy != "roman" {
 		t.Errorf("attribution lost: %+v", r)
 	}
 	if len(r.Retained) != 1 {

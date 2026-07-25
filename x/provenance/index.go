@@ -76,13 +76,10 @@ func (e *Index) PresentedSchemas() []present.Schema { return presentedSchemas() 
 // --- Indexer (write side) ---
 
 // Index writes the graph rows for one manifest inside the index-write
-// transaction. It is a pure function of the manifest: the edges come from the
-// core half of the record (HandleRefs), the meaning from this extension's Ext
-// block, and nothing is read from anywhere else — which is what lets a rebuild
-// reproduce the same rows from the manifests alone.
-//
-// A manifest with no provenance block is skipped: an artifact that came from
-// outside the system has no production record, and that is not a defect.
+// transaction. It is a pure function of the manifest — edges from HandleRefs,
+// meaning from the Ext block, nothing read from elsewhere — which is what lets a
+// rebuild reproduce it. A manifest with no block is skipped: an artifact from
+// outside has no production record, and that is not a defect.
 func (e *Index) Index(ctx context.Context, sub customindex.Substrate, m domain.Manifest) ([]customindex.Projection, error) {
 	block, ok, err := Decode(m.Ext)
 	if err != nil {

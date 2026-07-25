@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"scrinium.dev/domain"
+	"scrinium.dev/domain/extpocket"
 	"scrinium.dev/engine/store"
 	"scrinium.dev/engine/wrapper"
 	"scrinium.dev/errs"
@@ -214,16 +215,13 @@ var _ store.DataStore = (*scopedStore)(nil)
 // becomes a fresh object carrying just the stamp. It errors if Ext is
 // present but is not a JSON object.
 func stampNSID(ext json.RawMessage, id NamespaceID) (json.RawMessage, error) {
-	obj := map[string]json.RawMessage{}
-	if len(ext) > 0 {
-		if err := json.Unmarshal(ext, &obj); err != nil {
-			return nil, fmt.Errorf("namespace: artifact Ext is not a JSON object: %w", err)
-		}
-	}
 	idJSON, err := json.Marshal(string(id))
 	if err != nil {
 		return nil, err
 	}
-	obj[nsidField] = idJSON
-	return json.Marshal(obj)
+	out, err := extpocket.Put(ext, nsidField, idJSON)
+	if err != nil {
+		return nil, fmt.Errorf("namespace: %w", err)
+	}
+	return out, nil
 }
