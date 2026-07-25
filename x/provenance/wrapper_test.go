@@ -45,7 +45,8 @@ func (f *fakeDataStore) Delete(_ context.Context, id domain.ArtifactID) error {
 	return nil
 }
 
-// fakeLookup answers the guard's one question.
+// fakeLookup answers the guard's questions. Receipts and receipt-hood are
+// absent here: these tests cover the plain pinning guard, eviction has its own.
 type fakeLookup struct {
 	children map[domain.ArtifactID]bool
 	err      error
@@ -53,6 +54,14 @@ type fakeLookup struct {
 
 func (l fakeLookup) HasChildren(_ context.Context, id domain.ArtifactID) (bool, error) {
 	return l.children[id], l.err
+}
+
+func (l fakeLookup) HasReceipt(context.Context, domain.ArtifactID) (bool, error) {
+	return false, l.err
+}
+
+func (l fakeLookup) IsReceipt(context.Context, domain.ArtifactID) (bool, error) {
+	return false, l.err
 }
 
 func wrapStore(t *testing.T, cfg Config, lookup derivativeLookup, inner store.DataStore) store.DataStore {

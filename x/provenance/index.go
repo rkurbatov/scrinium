@@ -30,7 +30,7 @@ const (
 	tableByParent = "byParent" // parent ‖ rel ‖ child → position ‖ outcome
 	tableByChild  = "byChild"  // child ‖ position → parent ‖ rel
 	tableByRel    = "byRel"    // rel ‖ parent ‖ child → outcome
-	tableRecords  = "records"  // child → pkey ‖ outcome ‖ inputs-key
+	tableRecords  = "records"  // child → pkey ‖ outcome ‖ inputs-key ‖ repro
 	tableOps      = "ops"      // work identity → result; failure tallies
 	tableHeads    = "heads"    // superseded ‖ successor → marker
 
@@ -198,7 +198,11 @@ func (e *Index) Index(ctx context.Context, sub customindex.Substrate, m domain.M
 	// The per-child record is what makes deletion self-sufficient: at delete
 	// time the manifest body is gone (only its identity is passed), so the
 	// index must be able to recover from its own tables everything it wrote.
-	if err := sub.Put(tableRecords, child, []byte(join(block.PKey, string(block.Outcome), inputsKey))); err != nil {
+	// Reproducibility is stored, not only declared in the manifest: once an
+	// artifact is evicted its manifest is gone, and effective reproducibility of
+	// its descendants still has to be computable (ADR-113 П-11).
+	if err := sub.Put(tableRecords, child,
+		[]byte(join(block.PKey, string(block.Outcome), inputsKey, boolStr(block.Repro)))); err != nil {
 		return nil, err
 	}
 	if block.Outcome == OutcomeOK && block.PKey != "" {
@@ -225,7 +229,7 @@ func (e *Index) Unindex(ctx context.Context, sub customindex.Substrate, m domain
 	if !ok {
 		return nil // nothing of ours was ever written for this artifact
 	}
-	pkey, outcome, inputsKey := splitRecord(string(raw))
+	pkey, outcome, inputsKey, _ := splitRecord(string(raw))
 
 	// Walk the edges from the child side: byChild is keyed by this artifact,
 	// so it is the one table reachable without the manifest body.
@@ -365,6 +369,171 @@ func (e *Index) HasChildren(ctx context.Context, id domain.ArtifactID) (bool, er
 	return e.HasChildOf(ctx, id, "")
 }
 
+// --- Eviction (ADR-113) ---
+
+// Receipt returns the receipt artifact explaining this artifact's eviction, if
+// one exists. A traversal that hit an unresolvable handle asks this: the answer
+// distinguishes a deliberate decision from data loss.
+func (e *Index) Receipt(ctx context.Context, id domain.ArtifactID) (domain.ArtifactID, bool, error) {
+	if err := e.ready(); err != nil {
+		return "", false, err
+	}
+	var receipt domain.ArtifactID
+	err := e.sub.Scan(tableByParent, join(string(id), e.evictRel())+sep, func(key string, _ []byte) error {
+		parts := strings.Split(key, sep)
+		if len(parts) != 3 {
+			return nil
+		}
+		receipt = domain.ArtifactID(parts[2])
+		return customindex.ErrStopScan
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("provenance: receipt of %s: %w", id, err)
+	}
+	return receipt, receipt != "", nil
+}
+
+// HasReceipt is Receipt as a single bit — what the delete guard asks.
+func (e *Index) HasReceipt(ctx context.Context, id domain.ArtifactID) (bool, error) {
+	_, has, err := e.Receipt(ctx, id)
+	return has, err
+}
+
+// IsReceipt reports whether this artifact IS a receipt: it carries an eviction
+// edge to the artifact it explains. Receipts are not deletable, so the guard
+// needs to recognise one.
+func (e *Index) IsReceipt(ctx context.Context, id domain.ArtifactID) (bool, error) {
+	if err := e.ready(); err != nil {
+		return false, err
+	}
+	edges, err := e.Parents(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	for _, ed := range edges {
+		if ed.Rel == e.evictRel() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Cleanable reports whether an artifact may be removed as a cache — whether it
+// is EFFECTIVELY reproducible, not merely declared so (ADR-113 П-11).
+//
+// The declared flag stays honest about the operation and never changes, but it
+// stops being sufficient the moment a source is evicted: recognised text is a
+// cache while its scan is on disk and becomes data the moment the scan is gone.
+// So the real question is recursive — an artifact is available if it is alive,
+// or reproducible with all of ITS inputs available — and this walks it.
+//
+// The existence probe comes from the caller: the extension has no store handle
+// and should not acquire one.
+func (e *Index) Cleanable(
+	ctx context.Context,
+	id domain.ArtifactID,
+	alive func(context.Context, domain.ArtifactID) (bool, error),
+) (bool, error) {
+	if err := e.ready(); err != nil {
+		return false, err
+	}
+	if alive == nil {
+		return false, fmt.Errorf("provenance: Cleanable needs an existence probe")
+	}
+
+	rec, ok, err := e.record(id)
+	if err != nil {
+		return false, err
+	}
+	if !ok || !rec.repro {
+		return false, nil // an origin, or declared non-reproducible
+	}
+	return e.inputsAvailable(ctx, id, alive, map[domain.ArtifactID]bool{})
+}
+
+// inputsAvailable reports whether every input of id can be reached, directly or
+// by recomputation.
+func (e *Index) inputsAvailable(
+	ctx context.Context,
+	id domain.ArtifactID,
+	alive func(context.Context, domain.ArtifactID) (bool, error),
+	memo map[domain.ArtifactID]bool,
+) (bool, error) {
+	edges, err := e.Parents(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	for _, ed := range edges {
+		if ed.Rel == e.evictRel() {
+			continue // a receipt's own edge is not an input
+		}
+		ok, err := e.available(ctx, domain.ArtifactID(ed.Ref), alive, memo)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (e *Index) available(
+	ctx context.Context,
+	id domain.ArtifactID,
+	alive func(context.Context, domain.ArtifactID) (bool, error),
+	memo map[domain.ArtifactID]bool,
+) (bool, error) {
+	if v, seen := memo[id]; seen {
+		return v, nil
+	}
+	memo[id] = false // guards against a cycle in a corrupt graph
+
+	live, err := alive(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if live {
+		memo[id] = true
+		return true, nil
+	}
+	// Gone: recoverable only if it was reproducible and its own inputs are
+	// available. Its manifest no longer exists, which is exactly why the flag
+	// lives in the index.
+	rec, ok, err := e.record(id)
+	if err != nil {
+		return false, err
+	}
+	if !ok || !rec.repro {
+		return false, nil
+	}
+	res, err := e.inputsAvailable(ctx, id, alive, memo)
+	if err != nil {
+		return false, err
+	}
+	memo[id] = res
+	return res, nil
+}
+
+type recordRow struct {
+	pkey, outcome, inputsKey string
+	repro                    bool
+}
+
+func (e *Index) record(id domain.ArtifactID) (recordRow, bool, error) {
+	raw, ok, err := e.sub.Get(tableRecords, string(id))
+	if err != nil {
+		return recordRow{}, false, fmt.Errorf("provenance: record of %s: %w", id, err)
+	}
+	if !ok {
+		return recordRow{}, false, nil
+	}
+	pkey, outcome, inputsKey, repro := splitRecord(string(raw))
+	return recordRow{pkey: pkey, outcome: outcome, inputsKey: inputsKey, repro: repro}, true, nil
+}
+
+func (e *Index) evictRel() string { return e.cfg.evictRel() }
+
 // WalkUp visits the ancestors of id, breadth-first, up to depth levels
 // (depth<=0 — no limit), skipping artifacts already seen so a diamond is
 // visited once and a cycle cannot spin.
@@ -444,6 +613,17 @@ func (e *Index) Holes(ctx context.Context, q HoleQuery, cb func(domain.ArtifactI
 	}
 	for _, c := range candidates {
 		id := domain.ArtifactID(c)
+
+		// An evicted artifact keeps the rows where it is a parent — they were
+		// written by its children's manifests, which are alive. Without this
+		// check a star-shaped query would keep offering work on bytes that are
+		// gone, and the stage would fail and mis-tally the failure (ADR-113 П-10).
+		if evicted, err := e.HasReceipt(ctx, id); err != nil {
+			return err
+		} else if evicted {
+			continue
+		}
+
 		has, err := e.HasResultOf(ctx, id, q.Missing)
 		if err != nil {
 			return err
@@ -638,13 +818,20 @@ func outcomeOf(value []byte) Outcome {
 	return Outcome(out)
 }
 
-// splitRecord parses a records row ("pkey ‖ outcome ‖ inputs-key").
-func splitRecord(v string) (pkey, outcome, inputsKey string) {
-	parts := strings.SplitN(v, sep, 3)
-	for len(parts) < 3 {
+// splitRecord parses a records row ("pkey ‖ outcome ‖ inputs-key ‖ repro").
+func splitRecord(v string) (pkey, outcome, inputsKey string, repro bool) {
+	parts := strings.SplitN(v, sep, 4)
+	for len(parts) < 4 {
 		parts = append(parts, "")
 	}
-	return parts[0], parts[1], parts[2]
+	return parts[0], parts[1], parts[2], parts[3] == "1"
+}
+
+func boolStr(v bool) string {
+	if v {
+		return "1"
+	}
+	return "0"
 }
 
 func join(parts ...string) string { return strings.Join(parts, sep) }

@@ -23,6 +23,18 @@ var ErrBadProduction = errors.New("provenance: bad production record")
 // it.
 var ErrHasDerivatives = errors.New("provenance: artifact has derivatives")
 
+// ErrBadReceipt — an eviction receipt is malformed: no reason stated, no
+// decider, an undecodable or wrongly-versioned document, or one that names no
+// evicted artifact. An eviction whose explanation cannot be read is not an
+// explanation, so the receipt is refused before anything is written.
+var ErrBadReceipt = errors.New("provenance: bad eviction receipt")
+
+// ErrReceiptProtected — an attempt to delete a receipt. A receipt is the only
+// surviving explanation of bytes that are already gone; deleting it would leave
+// a dangling reference with no account of why, which is the state eviction
+// exists to avoid.
+var ErrReceiptProtected = errors.New("provenance: receipt cannot be deleted")
+
 // ErrForked — a supersede chain branches: more than one artifact claims to
 // replace the same one. Detecting the fork is mechanical; choosing the winner
 // is a policy this extension does not have.

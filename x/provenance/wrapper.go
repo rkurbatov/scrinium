@@ -21,15 +21,23 @@ const extensionName = Key
 // than by accident.
 type derivativeLookup interface {
 	HasChildren(ctx context.Context, id domain.ArtifactID) (bool, error)
+	HasReceipt(ctx context.Context, id domain.ArtifactID) (bool, error)
+	IsReceipt(ctx context.Context, id domain.ArtifactID) (bool, error)
 }
 
 // Config tunes the extension. The zero value is valid.
 type Config struct {
-	// SupersedeRel is the one relation kind this extension interprets: the
-	// chains it resolves to a head. Empty means DefaultSupersedeRel. A host
+	// SupersedeRel is one of the two relation kinds this extension interprets:
+	// the chains it resolves to a head. Empty means DefaultSupersedeRel. A host
 	// with its own word for replacement names it here; every other kind stays
 	// opaque either way.
 	SupersedeRel string
+
+	// EvictRel is the other: the kind of edge a receipt carries to the artifact
+	// whose disappearance it explains (ADR-113). Empty means DefaultEvictRel.
+	// Deliberately distinct from SupersedeRel — "what is current" and "where did
+	// the bytes go" are different questions.
+	EvictRel string
 
 	// GuardDeletes turns on the interim protection of sources: a Delete of an
 	// artifact that still has derivatives is refused with ErrHasDerivatives.
@@ -44,6 +52,13 @@ func (c Config) supersedeRel() string {
 		return DefaultSupersedeRel
 	}
 	return c.SupersedeRel
+}
+
+func (c Config) evictRel() string {
+	if c.EvictRel == "" {
+		return DefaultEvictRel
+	}
+	return c.EvictRel
 }
 
 // factory builds the provenance data-plane wrapper. It is Behavioral and
@@ -127,22 +142,46 @@ func (s *provStore) Put(ctx context.Context, a domain.Artifact, opts ...domain.P
 	return s.DataStore.Put(ctx, a, opts...)
 }
 
-// Delete refuses an artifact that still has derivatives (ErrHasDerivatives)
-// when the guard is configured, and otherwise delegates. This is the interim
-// stand-in for the core's reference accounting over artifact→artifact edges:
-// once the core refuses such a delete itself, this override becomes redundant
-// and is removed. Its weakness is deliberate and worth stating: it only
-// protects callers who hold the wrapped store.
+// Delete applies the extension's two guards and otherwise delegates. Ordinary
+// deletion rules are untouched below this point — tombstone, grace period,
+// reference counting, GC, retention, the store's deletion policy all apply as
+// always; the guards only decide whether Delete is attempted at all.
+//
+// First guard (ADR-112): an artifact with live derivatives is refused, UNLESS a
+// receipt explains its eviction (ADR-113). This is the interim stand-in for the
+// core's reference accounting over artifact→artifact edges; when the core
+// refuses such a delete itself, this half becomes redundant. Its weakness is
+// deliberate and worth stating: it only protects callers holding the wrapped
+// store.
+//
+// Second guard (ADR-113): a receipt itself is never deletable. It is the only
+// surviving account of bytes already gone, and losing it would leave a dangling
+// reference with no explanation.
 func (s *provStore) Delete(ctx context.Context, id domain.ArtifactID) error {
 	if !s.cfg.GuardDeletes {
 		return s.DataStore.Delete(ctx, id)
 	}
+
+	isReceipt, err := s.lookup.IsReceipt(ctx, id)
+	if err != nil {
+		return fmt.Errorf("provenance: check whether %s is a receipt: %w", id, err)
+	}
+	if isReceipt {
+		return fmt.Errorf("%s: %w", id, ErrReceiptProtected)
+	}
+
 	has, err := s.lookup.HasChildren(ctx, id)
 	if err != nil {
 		return fmt.Errorf("provenance: check derivatives of %s: %w", id, err)
 	}
 	if has {
-		return fmt.Errorf("%s: %w", id, ErrHasDerivatives)
+		explained, err := s.lookup.HasReceipt(ctx, id)
+		if err != nil {
+			return fmt.Errorf("provenance: check receipt of %s: %w", id, err)
+		}
+		if !explained {
+			return fmt.Errorf("%s has derivatives and no eviction receipt: %w", id, ErrHasDerivatives)
+		}
 	}
 	return s.DataStore.Delete(ctx, id)
 }

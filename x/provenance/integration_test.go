@@ -323,3 +323,236 @@ func TestIntegration_AssemblyKeepsInputOrder(t *testing.T) {
 		}
 	}
 }
+
+// Eviction over a real store: the source's bytes go, its derivatives stay, and
+// the receipt explains what happened. Ordinary deletion rules apply throughout —
+// eviction only adds the precondition and the receipt.
+func TestIntegration_EvictSourceKeepDerivatives(t *testing.T) {
+	ctx := context.Background()
+	s, pidx := harness(t, provenance.Config{GuardDeletes: true})
+
+	pdf := put(t, s, "scanned pdf bytes")
+	text := put(t, s, "recognised text", provenance.WithProduction(provenance.Production{
+		Inputs: []provenance.Input{{Ref: domain.HandleRef(pdf), Rel: "text"}},
+		Op:     "ocr",
+		Repro:  true,
+	}))
+
+	// Without a receipt the source is pinned.
+	if err := s.Delete(ctx, pdf); !errors.Is(err, provenance.ErrHasDerivatives) {
+		t.Fatalf("unexplained delete: want ErrHasDerivatives, got %v", err)
+	}
+
+	ev, err := provenance.NewEvictor(s, pidx, provenance.Config{GuardDeletes: true})
+	if err != nil {
+		t.Fatalf("NewEvictor: %v", err)
+	}
+	if err := ev.Evict(ctx, pdf, provenance.ReceiptSpec{
+		Retained:  []domain.ArtifactID{text},
+		Reason:    "ocr-complete",
+		DecidedBy: "roman",
+	}); err != nil {
+		t.Fatalf("Evict: %v", err)
+	}
+
+	// The bytes are gone.
+	if _, err := s.Get(ctx, pdf); err == nil {
+		t.Fatal("evicted artifact still readable")
+	}
+	// The derivative is untouched and still names its source: the graph is not
+	// rewritten, only reachability changes.
+	if _, err := s.Get(ctx, text); err != nil {
+		t.Fatalf("derivative lost: %v", err)
+	}
+	parents, err := pidx.Parents(ctx, text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parents) != 1 || parents[0].Ref != domain.HandleRef(pdf) {
+		t.Fatalf("derivative lost its declared source: %+v", parents)
+	}
+
+	// And the dangling reference has an explanation.
+	r, has, err := ev.ReadReceipt(ctx, pdf)
+	if err != nil || !has {
+		t.Fatalf("ReadReceipt: has=%v err=%v", has, err)
+	}
+	if r.Evicted.Artifact != pdf || r.Reason != "ocr-complete" || r.DecidedBy != "roman" {
+		t.Fatalf("receipt does not describe the eviction: %+v", r)
+	}
+	if len(r.Retained) != 1 || r.Retained[0] != text {
+		t.Fatalf("retained list wrong: %v", r.Retained)
+	}
+}
+
+// Eviction is idempotent, and the receipt is a standing decision: a repeat call
+// after the delete already happened must not write a second receipt.
+func TestIntegration_EvictIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	s, pidx := harness(t, provenance.Config{GuardDeletes: true})
+
+	src := put(t, s, "source")
+	_ = put(t, s, "derived", provenance.WithProduction(provenance.Production{
+		Inputs: []provenance.Input{{Ref: domain.HandleRef(src), Rel: "text"}},
+		Op:     "ocr",
+		Repro:  true,
+	}))
+
+	ev, err := provenance.NewEvictor(s, pidx, provenance.Config{GuardDeletes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := provenance.ReceiptSpec{Reason: "ocr-complete", DecidedBy: "roman"}
+	if err := ev.Evict(ctx, src, spec); err != nil {
+		t.Fatalf("first Evict: %v", err)
+	}
+
+	first, has, err := pidx.Receipt(ctx, src)
+	if err != nil || !has {
+		t.Fatalf("no receipt after eviction: %v", err)
+	}
+	// The artifact is already gone, so the retry can only re-attempt the delete.
+	if err := ev.Evict(ctx, src, spec); err == nil {
+		t.Fatal("re-evicting a gone artifact should surface the delete error")
+	}
+	again, _, err := pidx.Receipt(ctx, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != first {
+		t.Fatalf("a second receipt was written: %s then %s", first, again)
+	}
+}
+
+// A receipt without a stated reason or decider is refused before anything is
+// written: an eviction that cannot be attributed is indistinguishable from loss.
+func TestIntegration_EvictRefusesUnexplained(t *testing.T) {
+	ctx := context.Background()
+	s, pidx := harness(t, provenance.Config{GuardDeletes: true})
+
+	src := put(t, s, "source")
+	_ = put(t, s, "derived", provenance.WithProduction(provenance.Production{
+		Inputs: []provenance.Input{{Ref: domain.HandleRef(src), Rel: "text"}},
+		Op:     "ocr",
+		Repro:  true,
+	}))
+
+	ev, _ := provenance.NewEvictor(s, pidx, provenance.Config{GuardDeletes: true})
+	if err := ev.Evict(ctx, src, provenance.ReceiptSpec{Reason: "ocr-complete"}); !errors.Is(err, provenance.ErrBadReceipt) {
+		t.Fatalf("want ErrBadReceipt, got %v", err)
+	}
+	if has, _ := pidx.HasReceipt(ctx, src); has {
+		t.Error("a refused eviction still wrote a receipt")
+	}
+	if _, err := s.Get(ctx, src); err != nil {
+		t.Errorf("a refused eviction deleted the artifact: %v", err)
+	}
+}
+
+// The receipt survives: deleting it would leave a dangling reference with no
+// account of why the bytes are gone.
+func TestIntegration_ReceiptIsProtected(t *testing.T) {
+	ctx := context.Background()
+	s, pidx := harness(t, provenance.Config{GuardDeletes: true})
+
+	src := put(t, s, "source")
+	_ = put(t, s, "derived", provenance.WithProduction(provenance.Production{
+		Inputs: []provenance.Input{{Ref: domain.HandleRef(src), Rel: "text"}},
+		Op:     "ocr",
+		Repro:  true,
+	}))
+	ev, _ := provenance.NewEvictor(s, pidx, provenance.Config{GuardDeletes: true})
+	if err := ev.Evict(ctx, src, provenance.ReceiptSpec{Reason: "ocr-complete", DecidedBy: "roman"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rid, has, err := pidx.Receipt(ctx, src)
+	if err != nil || !has {
+		t.Fatal("no receipt")
+	}
+	if err := s.Delete(ctx, rid); !errors.Is(err, provenance.ErrReceiptProtected) {
+		t.Fatalf("want ErrReceiptProtected, got %v", err)
+	}
+	if _, err := s.Get(ctx, rid); err != nil {
+		t.Errorf("receipt was deleted anyway: %v", err)
+	}
+}
+
+// An evicted artifact must stop being offered work: its parent-side rows survive
+// the delete, and without the receipt check a stage would keep failing on bytes
+// that are gone.
+func TestIntegration_EvictedIsNotOfferedWork(t *testing.T) {
+	ctx := context.Background()
+	s, pidx := harness(t, provenance.Config{GuardDeletes: true})
+
+	bookA, bookB := put(t, s, "book A"), put(t, s, "book B")
+	for _, b := range []domain.ArtifactID{bookA, bookB} {
+		put(t, s, "text of "+string(b), provenance.WithProduction(provenance.Production{
+			Inputs: []provenance.Input{{Ref: domain.HandleRef(b), Rel: "text"}},
+			Op:     "ocr",
+			Repro:  true,
+		}))
+	}
+
+	owed := func() []domain.ArtifactID {
+		var out []domain.ArtifactID
+		if err := pidx.Holes(ctx, provenance.HoleQuery{Has: "text", Missing: "thumb"}, func(v domain.ArtifactID) error {
+			out = append(out, v)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if len(owed()) != 2 {
+		t.Fatalf("setup: both books owe a thumbnail, got %v", owed())
+	}
+
+	ev, _ := provenance.NewEvictor(s, pidx, provenance.Config{GuardDeletes: true})
+	if err := ev.Evict(ctx, bookA, provenance.ReceiptSpec{Reason: "space", DecidedBy: "roman"}); err != nil {
+		t.Fatal(err)
+	}
+	got := owed()
+	if len(got) != 1 || got[0] != bookB {
+		t.Fatalf("holes after eviction = %v, want only the live book", got)
+	}
+}
+
+// Effective reproducibility over a real store: the text is a cache while the pdf
+// is on disk and becomes data the moment it is evicted, though its own flag
+// never changes.
+func TestIntegration_CleanableAfterEviction(t *testing.T) {
+	ctx := context.Background()
+	s, pidx := harness(t, provenance.Config{GuardDeletes: true})
+
+	pdf := put(t, s, "scanned pdf")
+	text := put(t, s, "text", provenance.WithProduction(provenance.Production{
+		Inputs: []provenance.Input{{Ref: domain.HandleRef(pdf), Rel: "text"}},
+		Op:     "ocr",
+		Repro:  true,
+	}))
+
+	alive := func(ctx context.Context, v domain.ArtifactID) (bool, error) {
+		rh, err := s.Get(ctx, v)
+		if err != nil {
+			return false, nil
+		}
+		_ = rh.Close()
+		return true, nil
+	}
+
+	if ok, err := pidx.Cleanable(ctx, text, alive); err != nil || !ok {
+		t.Fatalf("text should be cleanable while the pdf lives: (%v, %v)", ok, err)
+	}
+
+	ev, _ := provenance.NewEvictor(s, pidx, provenance.Config{GuardDeletes: true})
+	if err := ev.Evict(ctx, pdf, provenance.ReceiptSpec{
+		Retained: []domain.ArtifactID{text}, Reason: "ocr-complete", DecidedBy: "roman",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if ok, err := pidx.Cleanable(ctx, text, alive); err != nil || ok {
+		t.Fatalf("text must not be cleanable once its source is evicted: (%v, %v)", ok, err)
+	}
+}
