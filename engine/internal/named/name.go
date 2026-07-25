@@ -24,6 +24,14 @@ const (
 	rootSlash = "named/"
 )
 
+// Root is that root, exported for engine code that has to sweep the WHOLE
+// system plane rather than address one artifact by name. A purging
+// re-initialisation is the only such caller today: it removes every system
+// artifact — descriptor replicas, config versions, agent cursors, checkpoint
+// pointers — and spelling the literal "named" a second time over there is how
+// the two would silently drift apart.
+const Root = root
+
 // ValidateName enforces the name contract. Names are slash-separated,
 // path-like strings: non-empty, no leading or trailing slash, no empty
 // segments, no "." or ".." traversal segments. The first segment

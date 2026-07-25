@@ -92,6 +92,12 @@ type Options struct {
 	// passphrase provider directly (imperative path); it takes precedence
 	// over one derived from the policy.
 	passphrase domain.PassphraseProvider
+	// forceReinit and purgeOnReinit carry the two destructive store options
+	// through to InitStore. They are only meaningful with ModeInit, and the
+	// store phase refuses any other combination rather than accepting a flag
+	// that would never fire (see openStore).
+	forceReinit   bool
+	purgeOnReinit bool
 }
 
 // SetCronParser installs the cron expression parser used by ScheduleCron.
@@ -110,6 +116,26 @@ func WithPassphrase(p domain.PassphraseProvider) BuildOption {
 // WithMode sets the open/init behaviour (default ModeOpenOrInit).
 func WithMode(m Mode) BuildOption {
 	return func(o *Options) { o.mode = m }
+}
+
+// WithForceReinit lets an init assemble over an existing store, DESTROYING it:
+// descriptor, system artifacts, manifests and index content go, blob payload
+// stays as reclaimable orphans (store.WithForceReinit has the full account).
+// The operation is irreversible.
+//
+// It requires WithMode(ModeInit). Not the forgiving default and not ModeOpen:
+// under ModeOpenOrInit an existing store simply opens, so the flag would sit
+// there looking armed and never fire — a shape that invites exactly one kind of
+// accident. Being explicit means the destructive intent and the mode that can
+// act on it are stated together.
+func WithForceReinit() BuildOption {
+	return func(o *Options) { o.forceReinit = true }
+}
+
+// WithPurgeOnReinit extends WithForceReinit to blob payload: nothing of the old
+// store survives, not even bytes waiting for GC. Requires WithForceReinit.
+func WithPurgeOnReinit() BuildOption {
+	return func(o *Options) { o.purgeOnReinit = true }
 }
 
 // WithEventHandler registers an event handler before assembly begins, so

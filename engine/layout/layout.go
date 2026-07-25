@@ -135,3 +135,29 @@ func validateRefShape(s string) error {
 	}
 	return nil
 }
+
+// BlobRoots returns every driver-side root that holds blob payload, one per
+// blob type. It serves a sweep that must cover ALL physical payload rather
+// than address a single blob — a purging re-initialisation is the one caller —
+// and it derives the names from rootFor so such a sweep cannot drift from what
+// BlobPath writes.
+func BlobRoots() []string {
+	types := []domain.BlobType{
+		domain.BlobTypeRegular,
+		domain.BlobTypeChunk,
+		domain.BlobTypePack,
+	}
+	out := make([]string, 0, len(types))
+	for _, t := range types {
+		root, err := rootFor(t)
+		if err != nil {
+			// Unreachable: every constant above is one rootFor knows. If a new
+			// blob type ever arrives without a root, skipping is the safe half
+			// of the bug — a caller sweeps less than it meant to, never
+			// something it never meant to touch.
+			continue
+		}
+		out = append(out, root)
+	}
+	return out
+}

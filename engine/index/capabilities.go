@@ -143,3 +143,47 @@ type ManifestResolver interface {
 type ManifestCounter interface {
 	CountManifests(ctx context.Context) (int64, error)
 }
+
+// ResetOptions tunes a Resetter.ResetIndex call.
+type ResetOptions struct {
+	// KeepBlobs retains the blobs table instead of emptying it, with every
+	// ref_count forced to zero.
+	//
+	// It exists for the non-purging re-initialisation, whose documented promise
+	// is that the new store starts on top of the old bytes and lets GC reclaim
+	// them. That promise only holds if the blob rows survive: a blob file whose
+	// ref does not resolve is an orphan by the Orphan Scan's definition and is
+	// deleted during the very bootstrap that follows the re-init, and a blob
+	// file with no row at all is invisible to GC forever. Zero ref_counts are
+	// what make the survivors reclaimable — and, in a Plain store, reusable by
+	// dedup.
+	KeepBlobs bool
+}
+
+// Resetter is the optional capability of a StoreIndex that can empty itself in
+// place — every artifact, edge, projection and extension row gone, the schema
+// left where it is.
+//
+// It exists for exactly one caller: InitStore under WithForceReinit, which
+// turns a location into a fresh store and must not leave the previous store's
+// rows behind. Discovered by assertion — idx.(Resetter) — like every index
+// capability.
+//
+// It is not part of the mandatory contract because emptying a shared database
+// is not every backend's business: an index living in someone else's Postgres
+// may have no right to truncate, and a stub returning "unsupported" in the
+// mandatory interface would be a false promise dressed as a method.
+//
+// There is deliberately no portable fallback built from the mandatory methods
+// (iterate manifests, delete each, drop the orphan blobs). It would look
+// complete and would not be: IterateManifests yields only user manifests, so
+// every handle-less row — pack containers, headless blobs — would survive with
+// its ref_counts intact, unreachable and unreclaimable. A loud refusal is
+// worth more than a wipe that leaves invisible corpses, so InitStore refuses a
+// forced re-init over an index that does not implement this.
+type Resetter interface {
+	// ResetIndex empties the index. It is atomic: either the index is empty
+	// afterwards or nothing changed. The schema itself stays at its current
+	// version — this resets content, not structure.
+	ResetIndex(ctx context.Context, opts ResetOptions) error
+}
