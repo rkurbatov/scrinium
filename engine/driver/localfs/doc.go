@@ -27,6 +27,17 @@
 //     the local filesystem. The Driver interface itself does not
 //     expose Watch — the Ingester (TODO M6.3) consumes fsnotify directly,
 //     guided by this flag.
+//   - CapDirEntries: on a filesystem a directory is an entry, so the tree
+//     can be walked with its directories (ListTree). That is what makes an
+//     empty directory capturable at all: it yields no object path, and an
+//     object store has no such entry to report.
+//
+// Optional interfaces implemented without a mask bit:
+//   - driver.ReadinessProber (ReadyToRead): a POSIX backend can tell a
+//     finished file from one being appended to, by asking for a
+//     non-blocking advisory lock. Advisory means advisory — a writer that
+//     takes no lock is invisible — so the consumer keeps its own
+//     unconditional guard and treats this as a veto on top.
 //
 // Not declared:
 //   - CapSlowRead: irrelevant for local disks.

@@ -30,6 +30,19 @@ const (
 	// is impossible; the Scrub Agent reduces the rate of explicit
 	// verification accordingly.
 	CapNativeChecksum
+
+	// CapDirEntries indicates that a directory is an ENTRY on this
+	// backend rather than a prefix of a name, so the tree can be walked
+	// with its directories. A driver declaring it implements
+	// TreeLister (optional.go). Object stores do not declare it: they
+	// have prefixes, and an empty prefix does not exist at all.
+	//
+	// It earns a bit because a configuration's VALIDITY depends on it —
+	// capturing directories over a driver without them is an assembly
+	// error, and that must be caught before anything is built
+	// (ADR-114/115). A capability that is merely used, not planned
+	// around, carries no bit; see optional.go.
+	CapDirEntries
 )
 
 // Has reports whether the given flag is set in the mask.
