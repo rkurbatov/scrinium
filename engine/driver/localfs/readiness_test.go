@@ -74,10 +74,12 @@ func TestReadyToRead(t *testing.T) {
 		t.Fatalf("absent path: (%v, %v)", ok, err)
 	}
 
-	// Zero length: the normal first state of a file being created.
+	// A zero-length file is a legitimate file: emptiness is not evidence that
+	// somebody is still writing it. Deferring it here would defer it forever —
+	// freshness is the settle window's business, not the probe's.
 	write(t, root, "empty.txt", "")
-	if ok, err := d.ReadyToRead(ctx, "empty.txt"); err != nil || ok {
-		t.Fatalf("zero-length file reported ready: (%v, %v)", ok, err)
+	if ok, err := d.ReadyToRead(ctx, "empty.txt"); err != nil || !ok {
+		t.Fatalf("zero-length file reported not ready: (%v, %v)", ok, err)
 	}
 
 	// A directory has nothing to read; answering true would let a caller

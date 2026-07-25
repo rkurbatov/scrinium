@@ -25,10 +25,13 @@ import (
 // answer is "not yet". The lock is released immediately — it is asked as a
 // question, not taken as a claim, so this method never blocks a writer.
 //
-// Two more cases answer false: a path that does not exist (it may appear on
-// the next pass) and a zero-length file, which on a POSIX filesystem is the
-// normal first state of a file being created. A caller postpones such an
-// element instead of failing on it.
+// A path that does not exist answers false rather than erroring: it may appear
+// on the next pass, and a caller postpones such an element instead of failing.
+//
+// Emptiness is NOT taken as evidence of anything. A zero-length file is a
+// legitimate file, and treating it as "still being created" would defer it
+// forever; freshness is the settle window's job, and the window has already had
+// its say by the time this is asked.
 //
 // Advisory locks are exactly that — advisory. A writer that takes no lock is
 // invisible to this probe, and most writers take none (the common uploader
@@ -69,7 +72,7 @@ func (d *Driver) ReadyToRead(ctx context.Context, path string) (bool, error) {
 		// answering true would let a caller open it as a file.
 		return false, nil
 	}
-	return info.Size() > 0, nil
+	return true, nil
 }
 
 // ListTree walks the tree under prefix and reports every entry modified at or
