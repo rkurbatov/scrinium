@@ -18,6 +18,35 @@ func checkRefLimits(m domain.Manifest) error {
 	if len(m.BlobRefs) > domain.MaxBlobRefs || len(m.HandleRefs) > domain.MaxHandleRefs {
 		return errs.ErrTooManyRefs
 	}
+	return checkHandleRefs(m)
+}
+
+// checkHandleRefs enforces the SHAPE of the artifact→artifact edges (ADR-112):
+// every entry names a target, and a manifest never lists the same target
+// twice. It runs at the same encode boundary as checkRefLimits, so a
+// structurally invalid edge array is never serialised — whether it came from
+// a public Put (WithParentRefs) or from a structural wrapper (bundler members).
+//
+// What it deliberately does NOT check is existence: an edge is a declaration.
+// Resolving targets here would make the write path depend on the index and
+// would break restore, where a target's replica may arrive after its child.
+// Dangling edges are a graph-integrity concern, detected by traversal, not a
+// write-time error.
+func checkHandleRefs(m domain.Manifest) error {
+	if len(m.HandleRefs) == 0 {
+		return nil
+	}
+	seen := make(map[domain.HandleRef]struct{}, len(m.HandleRefs))
+	for i, ref := range m.HandleRefs {
+		if ref == "" {
+			return fmt.Errorf("%w: empty ref at position %d", errs.ErrInvalidHandleRef, i)
+		}
+		if _, dup := seen[ref]; dup {
+			return fmt.Errorf("%w: duplicate ref %s at position %d",
+				errs.ErrInvalidHandleRef, ref, i)
+		}
+		seen[ref] = struct{}{}
+	}
 	return nil
 }
 

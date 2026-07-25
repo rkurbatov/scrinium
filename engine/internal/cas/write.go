@@ -271,6 +271,15 @@ func (e *IO) AssembleManifest(cfg config.StoreConfig, a domain.Artifact, opts do
 	if blob.BlobRef != "" {
 		manifest.BlobRefs = []domain.BlobRef{blob.BlobRef}
 	}
+	// Edges to source artifacts (ADR-92/112), copied verbatim and in order:
+	// position is part of the edge's identity in the index. They go in BEFORE
+	// ComputeHandle, because handle_refs is part of the body the handle and
+	// then the digest hash — an artifact's sources are part of what it is.
+	// Shape is validated at the encode boundary (checkRefLimits/checkHandleRefs);
+	// targets are never resolved here (a declarative edge, not a join).
+	if len(opts.ParentRefs) > 0 {
+		manifest.HandleRefs = append([]domain.HandleRef(nil), opts.ParentRefs...)
+	}
 
 	hashAlgo := string(cfg.ContentHasher)
 

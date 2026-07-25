@@ -66,6 +66,15 @@ var ErrArtifactTooLarge = errors.New("scrinium: artifact exceeds MaxArtifactSize
 // opaque host-application block.
 var ErrUsrTooLarge = errors.New("scrinium: usr metadata too large")
 
+// ErrInvalidHandleRef — a handle_refs entry is malformed on write: an empty
+// ref, or the same target repeated in one manifest. Shape-only: the core
+// deliberately does NOT verify that a target exists (an edge is declarative,
+// ADR-112 — resolving it would put an index read on the write path and break
+// restore, where the target's replica may arrive later). Semantic validation
+// of a production record (relation kinds, operation, parameters) belongs to
+// the provenance extension and surfaces as its own error.
+var ErrInvalidHandleRef = errors.New("scrinium: invalid handle ref")
+
 // ErrTooManyRefs — a manifest reference array (blob_refs or handle_refs)
 // exceeds MaxBlobRefs/MaxHandleRefs (65535). ADR-93: the on-disk list is
 // 16-bit length-counted, so it cannot hold more.
