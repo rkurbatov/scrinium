@@ -2,11 +2,14 @@
 // atomically, and reports the hash of what landed.
 //
 // It exists because two agents need exactly this and must not diverge on it
-// (ADR-97 INV-97-5). The Ejector materialises a single artifact into a private
-// scratch directory, named by content hash, for consumers that need a path
-// rather than a stream. The Extractor lays a whole tree out at the paths the
-// capture recorded, and does it leaf by leaf. Different verbs, different
-// lifetimes, different naming — the same write.
+// (ADR-97 INV-97-5). It sits at the module root rather than under engine/
+// because one of those agents lives with the filesystem-path extension, outside
+// the engine tree: an engine-internal package would be unreachable from there.
+//
+// The Ejector materialises a single artifact into a private scratch directory,
+// named by content hash, for consumers that need a path rather than a stream.
+// The Extractor lays a whole tree out at the paths the capture recorded, leaf by
+// leaf. Different verbs, different lifetimes, different naming — the same write.
 //
 // What the primitive guarantees: a temporary file created exclusively (no
 // following a symlink into somewhere else), the caller's bytes, an fsync, and a

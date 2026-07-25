@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"scrinium.dev/domain"
-	"scrinium.dev/engine/internal/materialize"
 	"scrinium.dev/errs"
+	"scrinium.dev/internal/materialize"
 )
 
 // Eject materialises the whole artifact (fire-and-forget).

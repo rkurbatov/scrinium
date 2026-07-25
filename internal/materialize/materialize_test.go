@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"scrinium.dev/engine/internal/materialize"
+	"scrinium.dev/internal/materialize"
 )
 
 func body(s string) materialize.Fill {
