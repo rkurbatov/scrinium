@@ -23,11 +23,16 @@ import (
 //  1. Probe the Driver for an existing descriptor. If one is
 //     present and WithForceReinit is NOT set, return
 //     errs.ErrStoreAlreadyExists.
-//  2. With WithForceReinit, wipe the structural state — the
-//     descriptor and the manifests/ directory. Existing blobs/
-//     are NOT removed unless WithPurgeOnReinit is also set;
-//     this lets a user start a fresh Store on top of orphan
-//     blobs and let GC reclaim them.
+//  2. With WithForceReinit, wipe the structural state: both
+//     descriptor replicas, every system artifact, every manifest
+//     file, and the StoreIndex's content. Blob payload survives,
+//     with its index rows kept at ref_count 0 — so the new Store
+//     starts on top of the old bytes and GC reclaims them at its
+//     own pace. WithPurgeOnReinit removes the payload too, along
+//     with any tombstone markers, leaving the Location bare. Both
+//     levels live in reinit.go; a forced re-init requires a
+//     StoreIndex implementing index.Resetter and refuses without
+//     one rather than wiping half of it.
 //  3. Generate a fresh StoreID. Apply config defaults. Validate
 //     immutable parameters.
 //  4. Validate that a StoreIndex was provided via WithStoreIndex.
@@ -105,23 +110,40 @@ func InitStore(ctx context.Context, drv driver.Driver, opts ...StoreOption) (Sto
 		return nil, nil, wrap("invalid config", err)
 	}
 
-	// --- Probe for existing descriptor; honour WithForceReinit ---
-
-	if err := prepareInitLocation(ctx, drv, o.hashRegistry, o.forceReinit, optsLogger(o, "store"), wrap); err != nil {
-		return nil, nil, err
-	}
-
 	// --- Validate the StoreIndex dependency ---
 	//
 	// core does not import any concrete index implementation. The
 	// caller is expected to construct one (sqlite.NewStore,
 	// in-memory, or any other) and pass it via WithStoreIndex.
 	// This keeps the dependency graph one-way: core ← index.
+	//
+	// Checked BEFORE the location probe: a forced re-init empties the
+	// index as part of the wipe, so the dependency has to be in hand
+	// before anything on disk is touched. It also means a missing
+	// index is reported without having mutated the Location.
 
 	idx := o.storeIndex
 	if idx == nil {
 		return nil, nil, fmt.Errorf(
 			"store.InitStore: WithStoreIndex is required (see DI Example)")
+	}
+
+	// --- Refuse a purge that was not asked to destroy anything ---
+	//
+	// WithPurgeOnReinit only means something alongside WithForceReinit:
+	// on its own it describes how to destroy a store nobody authorised
+	// destroying. Silently ignoring it is how a caller ends up believing
+	// a purge happened.
+	if o.purgeOnReinit && !o.forceReinit {
+		return nil, nil, fmt.Errorf(
+			"store.InitStore: WithPurgeOnReinit requires WithForceReinit " +
+				"(a purge is how a forced re-init destroys payload, not a mode of its own)")
+	}
+
+	// --- Probe for existing descriptor; honour WithForceReinit ---
+
+	if err := prepareInitLocation(ctx, drv, idx, o, optsLogger(o, "store"), wrap); err != nil {
+		return nil, nil, err
 	}
 
 	// --- Refuse encrypted-manifest configs without a passphrase ---
@@ -206,51 +228,6 @@ func InitStore(ctx context.Context, drv driver.Driver, opts ...StoreOption) (Sto
 	s.lastConfigSeq = cfgSeq
 	s.startLiveness(o.livenessInterval)
 	return s, kit, nil
-}
-
-// prepareInitLocation probes the Driver for an existing descriptor and
-// applies the WithForceReinit policy. With no descriptor present it is a
-// no-op (the normal fresh-Location path). A present descriptor refuses
-// with errs.ErrStoreAlreadyExists unless force is set; an unreadable one
-// refuses with errs.ErrStoreCorrupted unless force is set. Under force,
-// the well-known descriptor file is removed — blobs/ are left in place
-// for GC.
-func prepareInitLocation(ctx context.Context, drv driver.Driver, hashes domain.HashRegistry, forceReinit bool, log *slog.Logger, wrap func(string, error) error) error {
-	existing, probeErr := descriptor.Read(ctx, drv, hashes)
-	switch {
-	case probeErr == nil:
-		// Descriptor present.
-		if !forceReinit {
-			return fmt.Errorf("%w: storeId=%s",
-				errs.ErrStoreAlreadyExists, existing.StoreID)
-		}
-		// Force reinit: clean up structural state. We stay
-		// conservative — only the well-known files are touched.
-		if err := descriptor.RemoveBoth(ctx, drv); err != nil {
-			return wrap("remove old descriptor", err)
-		}
-		log.LogAttrs(ctx, slog.LevelWarn, "force-reinit: removed existing descriptor",
-			slog.String("store_id", existing.StoreID))
-	case errors.Is(probeErr, errs.ErrArtifactNotFound):
-		// Fresh Location, the normal path.
-	default:
-		// The descriptor exists but is unreadable. Refuse to proceed
-		// without WithForceReinit; the user must decide whether they
-		// really want to clobber what is there.
-		if !forceReinit {
-			return fmt.Errorf("%w: descriptor present but unreadable: %v",
-				errs.ErrStoreCorrupted, probeErr)
-		}
-		// Best-effort removal of the unreadable descriptor. A failure
-		// here is not fatal (the subsequent Persist overwrites it), but
-		// it is operator-relevant — Warn rather than swallow.
-		if rmErr := descriptor.RemoveBoth(ctx, drv); rmErr != nil {
-			log.LogAttrs(ctx, slog.LevelWarn,
-				"force-reinit: could not remove unreadable descriptor (will overwrite)",
-				slog.String("error", rmErr.Error()))
-		}
-	}
-	return nil
 }
 
 // persistInitState writes the descriptor (both replicas) and persists the

@@ -34,16 +34,37 @@ type storeOptions struct {
 	logger           *slog.Logger
 }
 
-// WithForceReinit allows InitStore to run on top of an existing
-// Store (deleting L0, L1, the StoreIndex, and the manifests/
-// directory). The operation is irreversible.
+// WithForceReinit allows InitStore to run on top of an existing Store,
+// destroying it. The operation is IRREVERSIBLE and assumes the Location is not
+// in use — it neither tombstones nor coordinates with other hosts.
+//
+// What it removes: both descriptor replicas, every system artifact (config
+// versions, agent cursors, checkpoint pointers), every manifest file, and the
+// StoreIndex's content.
+//
+// What it keeps: blob payload, together with its index rows at ref_count 0. The
+// new Store therefore starts on top of the old bytes — GC reclaims them at its
+// own pace, and until then a Plain Store's dedup may reuse them. Add
+// WithPurgeOnReinit to remove the payload as well.
+//
+// It requires a StoreIndex implementing index.Resetter and refuses without one:
+// a forced re-init that cannot empty the index would produce a Store that looks
+// fresh while carrying the previous one's rows.
+//
+// On a Location with no Store it destroys nothing and is not an error.
 func WithForceReinit() StoreOption {
 	return func(o *storeOptions) { o.forceReinit = true }
 }
 
-// WithPurgeOnReinit, in combination with WithForceReinit, also
-// removes physical blobs (rather than leaving them as orphans for
-// later GC).
+// WithPurgeOnReinit, alongside WithForceReinit, extends the destruction to blob
+// payload: the blob index rows go with everything else, the files under every
+// blob root are removed, and tombstone markers left behind by a GC cycle that
+// had marked but not yet swept are removed too. Afterwards the Location holds a
+// fresh Store and nothing else.
+//
+// Without WithForceReinit it is an error rather than a no-op: on its own it
+// describes how to destroy a Store nobody authorised destroying, and ignoring
+// it silently is how a caller comes to believe a purge happened.
 func WithPurgeOnReinit() StoreOption {
 	return func(o *storeOptions) { o.purgeOnReinit = true }
 }

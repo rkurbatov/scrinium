@@ -345,11 +345,11 @@ func TestLog_ErrorReturnTracedAtDebug(t *testing.T) {
 	}
 }
 
-// TestLog_ForceReinitWarns verifies the best-effort force-reinit removal is
-// logged at Warn (no caller sees that cleanup otherwise). It reinitialises the
-// SAME on-disk root through a fresh driver handle, so it constructs localfs
-// directly rather than via driverfx.LocalFS (which roots a new tempdir each
-// call).
+// TestLog_ForceReinitWarns verifies that a forced re-initialisation announces
+// itself at Warn, both before and after: no caller sees the destruction
+// otherwise, and it is irreversible. It reinitialises the SAME on-disk root
+// through a fresh driver handle, so it constructs localfs directly rather than
+// via driverfx.LocalFS (which roots a new tempdir each call).
 func TestLog_ForceReinitWarns(t *testing.T) {
 	l, recs := debugLogger()
 	root := t.TempDir()
@@ -370,8 +370,9 @@ func TestLog_ForceReinitWarns(t *testing.T) {
 		t.Fatalf("InitStore (first): %v", err)
 	}
 
-	// Second init with WithForceReinit removes the existing descriptor and
-	// must Warn about it.
+	// Second init with WithForceReinit destroys the existing store and must
+	// Warn about it — once on the way in, naming the store being destroyed,
+	// and once on the way out, reporting what went.
 	if _, _, err := store.InitStore(context.Background(), mkDriver(),
 		store.WithStoreIndex(indexfx.Memory(t)),
 		store.WithHashRegistry(storefx.Hashes()),
@@ -380,9 +381,17 @@ func TestLog_ForceReinitWarns(t *testing.T) {
 	); err != nil {
 		t.Fatalf("InitStore (force-reinit): %v", err)
 	}
-	if rec := find(recs, "force-reinit: removed existing descriptor"); rec == nil {
-		t.Error(`no force-reinit Warn record`)
-	} else if rec.Level != slog.LevelWarn {
-		t.Errorf("force-reinit level: want Warn, got %v", rec.Level)
+	for _, msg := range []string{
+		"force-reinit: destroying the existing store",
+		"force-reinit: location wiped",
+	} {
+		rec := find(recs, msg)
+		if rec == nil {
+			t.Errorf("no force-reinit Warn record %q", msg)
+			continue
+		}
+		if rec.Level != slog.LevelWarn {
+			t.Errorf("force-reinit record %q: level want Warn, got %v", msg, rec.Level)
+		}
 	}
 }

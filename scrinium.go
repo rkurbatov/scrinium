@@ -246,6 +246,26 @@ func WithMode(m Mode) BuildOption { return assembly.WithMode(m) }
 // (*ScriniumClient).Subscribe. A nil handler is ignored.
 func WithEventHandler(fn func(Event)) BuildOption { return assembly.WithEventHandler(fn) }
 
+// WithForceReinit assembles a FRESH store over an existing one, destroying it.
+// The descriptor, every system artifact, every manifest and the index's content
+// go; blob payload stays behind as reclaimable orphans until GC reaches it. The
+// operation is irreversible and assumes nothing else is using the location.
+//
+// It requires WithMode(ModeInit) — under the default ModeOpenOrInit an existing
+// store simply opens, so a caller passing this alone would be holding a
+// destructive flag that never fires. Add WithPurgeOnReinit to remove the
+// payload as well and leave the location bare.
+//
+//	c, err := scrinium.Open(ctx, uri,
+//	    scrinium.WithMode(scrinium.ModeInit),
+//	    scrinium.WithForceReinit(), scrinium.WithPurgeOnReinit())
+func WithForceReinit() BuildOption { return assembly.WithForceReinit() }
+
+// WithPurgeOnReinit extends WithForceReinit to blob payload: after it, nothing
+// of the previous store survives at the location — no bytes waiting for GC, no
+// tombstone markers. Requires WithForceReinit.
+func WithPurgeOnReinit() BuildOption { return assembly.WithPurgeOnReinit() }
+
 // WithStandardScheduler runs the built-in scheduler: one goroutine ticks
 // it on real time and runs due agents, stopped on Close. Without it the
 // client keeps no resident goroutine — agents run only via RunMaintenance.

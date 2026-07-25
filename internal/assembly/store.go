@@ -56,6 +56,11 @@ func (bs *buildState) openStore() error {
 	if pp != nil {
 		storeOpts = append(storeOpts, store.WithPassphrase(pp), store.WithAutoUnlock())
 	}
+	reinitOpts, err := reinitOptions(bs.mode, bs.opts)
+	if err != nil {
+		return err
+	}
+	storeOpts = append(storeOpts, reinitOpts...)
 
 	st, created, kit, err := openOrInitStore(bs.ctx, bs.drv, bs.mode, storeOpts)
 	if err != nil {
@@ -165,4 +170,33 @@ func hashRegistry() domain.HashRegistry {
 type wrappedStore struct {
 	store.DataStore
 	store.AdminStore
+}
+
+// reinitOptions translates the two destructive build options into store
+// options, and refuses the combinations in which they would be a lie.
+//
+// Both are irreversible and both only act inside InitStore, so the mode is not
+// a detail to be inferred: under ModeOpenOrInit an existing store opens and the
+// flag never fires, which is the worst possible shape for a destructive
+// setting — armed in the caller's mind, inert in fact. ModeInit is therefore
+// required rather than assumed, and the error says so.
+func reinitOptions(mode buildMode, opts *Options) ([]store.StoreOption, error) {
+	switch {
+	case !opts.forceReinit && !opts.purgeOnReinit:
+		return nil, nil
+	case !opts.forceReinit:
+		return nil, fmt.Errorf(
+			"scrinium: WithPurgeOnReinit requires WithForceReinit " +
+				"(a purge is how a forced re-init destroys payload, not a mode of its own)")
+	case mode != modeInit:
+		return nil, fmt.Errorf(
+			"scrinium: WithForceReinit requires WithMode(ModeInit); " +
+				"under any other mode an existing store is opened and nothing is destroyed")
+	}
+
+	out := []store.StoreOption{store.WithForceReinit()}
+	if opts.purgeOnReinit {
+		out = append(out, store.WithPurgeOnReinit())
+	}
+	return out, nil
 }
