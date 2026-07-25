@@ -9,18 +9,12 @@ import (
 	"scrinium.dev/domain"
 )
 
-// receipt builds the manifest an evictor's Put would produce: an artifact whose
-// only edge is the eviction edge to the artifact it explains.
-func receiptManifest(rid, evicted domain.ArtifactID, cfg Config) domain.Manifest {
-	return record(rid, EvictOp, OutcomeOK, Input{Ref: domain.HandleRef(evicted), Rel: cfg.evictRel()})
-}
-
 // --- index side ---
 
 func TestIndex_ReceiptLookup(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	src, text, rid := id("a"), id("b"), id("r")
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	src, text, rid := aid("a"), aid("b"), aid("r")
 
 	indexAll(t, idx, sub,
 		record(text, "ocr", OutcomeOK, Input{Ref: domain.HandleRef(src), Rel: "text"}),
@@ -51,13 +45,13 @@ func TestIndex_ReceiptLookup(t *testing.T) {
 // An evicted artifact keeps the rows where it is a parent, so the hole query has
 // to skip it — otherwise a stage is offered work on bytes that are gone.
 func TestIndex_HolesSkipEvicted(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	bookA, bookB := id("a"), id("b")
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	bookA, bookB := aid("a"), aid("b")
 
 	indexAll(t, idx, sub,
-		record(id("c"), "ocr", OutcomeOK, Input{Ref: domain.HandleRef(bookA), Rel: "text"}),
-		record(id("d"), "ocr", OutcomeOK, Input{Ref: domain.HandleRef(bookB), Rel: "text"}),
+		record(aid("c"), "ocr", OutcomeOK, Input{Ref: domain.HandleRef(bookA), Rel: "text"}),
+		record(aid("d"), "ocr", OutcomeOK, Input{Ref: domain.HandleRef(bookB), Rel: "text"}),
 	)
 
 	count := func() int {
@@ -74,7 +68,7 @@ func TestIndex_HolesSkipEvicted(t *testing.T) {
 		t.Fatalf("setup: both books should owe a thumbnail")
 	}
 
-	indexAll(t, idx, sub, receiptManifest(id("r"), bookA, Config{}))
+	indexAll(t, idx, sub, receiptManifest(aid("r"), bookA, Config{}))
 	if got := count(); got != 1 {
 		t.Fatalf("holes = %d, want only the un-evicted book", got)
 	}
@@ -84,9 +78,9 @@ func TestIndex_HolesSkipEvicted(t *testing.T) {
 // gone, and a chain stays recoverable while some living ancestor can regenerate
 // it (ADR-113 П-11).
 func TestIndex_CleanableFollowsAvailability(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	pdf, text, chunk := id("a"), id("b"), id("c")
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	pdf, text, chunk := aid("a"), aid("b"), aid("c")
 
 	indexAll(t, idx, sub,
 		record(text, "ocr", OutcomeOK, Input{Ref: domain.HandleRef(pdf), Rel: "text"}),
@@ -135,20 +129,12 @@ func TestIndex_CleanableFollowsAvailability(t *testing.T) {
 
 // A non-reproducible derivative is never a cache, however alive its inputs are.
 func TestIndex_CleanableRefusesNonRepro(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	src, judgement := id("a"), id("b")
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	src, judgement := aid("a"), aid("b")
 
-	m := record(judgement, "review", OutcomeOK, Input{Ref: domain.HandleRef(src), Rel: "note"})
-	// record() declares repro:true; rewrite the block as a human judgement.
-	block, _, _ := Decode(m.Ext)
-	block.Repro = false
-	ext, err := stamp(nil, block)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m.Ext = ext
-	indexAll(t, idx, sub, m)
+	indexAll(t, idx, sub, production(judgement, "review", OutcomeOK, false,
+		Input{Ref: domain.HandleRef(src), Rel: "note"}))
 
 	alive := func(context.Context, domain.ArtifactID) (bool, error) { return true, nil }
 	if ok, err := idx.Cleanable(ctx, judgement, alive); err != nil || ok {
@@ -159,7 +145,7 @@ func TestIndex_CleanableRefusesNonRepro(t *testing.T) {
 // --- guard side ---
 
 func TestGuard_ReceiptUnlocksDeleteAndProtectsItself(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	src, rid := domain.ArtifactID("source"), domain.ArtifactID("receipt")
 
 	lookup := &evictLookup{
@@ -234,13 +220,13 @@ func TestReceiptSpec_RequiresReasonAndDecider(t *testing.T) {
 
 func TestReceipt_RoundTripAndVersioning(t *testing.T) {
 	m := domain.Manifest{
-		ArtifactID:   id("a"),
+		ArtifactID:   aid("a"),
 		ContentHash:  "abc123",
 		OriginalSize: 148921344,
 		Ext:          []byte(`{"vfsmeta":{"path":"books/foo.pdf","mime":"application/pdf"}}`),
 	}
 	doc, err := receiptFor(ReceiptSpec{
-		Retained:  []domain.ArtifactID{id("b")},
+		Retained:  []domain.ArtifactID{aid("b")},
 		Reason:    "ocr-complete",
 		Rule:      "pdf over 100MB",
 		DecidedBy: "roman",
@@ -282,7 +268,7 @@ func TestReceipt_RoundTripAndVersioning(t *testing.T) {
 // An artifact with no path carries none — that is not an error.
 func TestReceipt_PathIsOptional(t *testing.T) {
 	doc, err := receiptFor(ReceiptSpec{Reason: "r", DecidedBy: "d"},
-		domain.Manifest{ArtifactID: id("a")}).encode()
+		domain.Manifest{ArtifactID: aid("a")}).encode()
 	if err != nil {
 		t.Fatal(err)
 	}

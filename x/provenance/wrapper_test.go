@@ -82,7 +82,7 @@ func TestPut_StampsRecordAndPassesEdgesToCore(t *testing.T) {
 	s := wrapStore(t, Config{}, nil, inner)
 
 	src := ref("a")
-	_, err := s.Put(context.Background(), domain.Artifact{},
+	_, err := s.Put(t.Context(), domain.Artifact{},
 		WithProduction(Production{
 			Inputs: []Input{{Ref: src, Rel: "derived"}},
 			Op:     "ocr",
@@ -152,7 +152,7 @@ func TestPut_NoRecordPassesThrough(t *testing.T) {
 	inner := &fakeDataStore{}
 	s := wrapStore(t, Config{}, nil, inner)
 
-	if _, err := s.Put(context.Background(), domain.Artifact{Ext: json.RawMessage(`{"nsid":"ns-1"}`)}); err != nil {
+	if _, err := s.Put(t.Context(), domain.Artifact{Ext: json.RawMessage(`{"nsid":"ns-1"}`)}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if _, ok, _ := Decode(inner.lastExt); ok {
@@ -168,7 +168,7 @@ func TestPut_StampPreservesOtherSchemas(t *testing.T) {
 	inner := &fakeDataStore{}
 	s := wrapStore(t, Config{}, nil, inner)
 
-	_, err := s.Put(context.Background(),
+	_, err := s.Put(t.Context(),
 		domain.Artifact{Ext: json.RawMessage(`{"vfsmeta":{"path":"/a/b"},"nsid":"ns-1"}`)},
 		WithProduction(Production{
 			Inputs: []Input{{Ref: ref("a"), Rel: "derived"}},
@@ -222,7 +222,7 @@ func TestPut_RejectsMalformedRecords(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := &fakeDataStore{}
 			s := wrapStore(t, Config{}, nil, inner)
-			_, err := s.Put(context.Background(), domain.Artifact{}, WithProduction(tc.p))
+			_, err := s.Put(t.Context(), domain.Artifact{}, WithProduction(tc.p))
 			if !errors.Is(err, ErrBadProduction) {
 				t.Fatalf("want ErrBadProduction, got %v", err)
 			}
@@ -238,7 +238,7 @@ func TestPut_RejectsMalformedRecords(t *testing.T) {
 func TestPut_JudgementAndFailureAreOrdinaryRecords(t *testing.T) {
 	inner := &fakeDataStore{}
 	s := wrapStore(t, Config{}, nil, inner)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if _, err := s.Put(ctx, domain.Artifact{}, WithProduction(Production{
 		Inputs: []Input{{Ref: ref("a"), Rel: DefaultSupersedeRel}},
@@ -271,7 +271,7 @@ func TestDelete_GuardRefusesSourceWithDerivatives(t *testing.T) {
 	s := wrapStore(t, Config{GuardDeletes: true},
 		fakeLookup{children: map[domain.ArtifactID]bool{src: true}}, inner)
 
-	if err := s.Delete(context.Background(), src); !errors.Is(err, ErrHasDerivatives) {
+	if err := s.Delete(t.Context(), src); !errors.Is(err, ErrHasDerivatives) {
 		t.Fatalf("want ErrHasDerivatives, got %v", err)
 	}
 	if len(inner.deleted) != 0 {
@@ -279,7 +279,7 @@ func TestDelete_GuardRefusesSourceWithDerivatives(t *testing.T) {
 	}
 
 	// A leaf deletes normally.
-	if err := s.Delete(context.Background(), "leaf"); err != nil {
+	if err := s.Delete(t.Context(), "leaf"); err != nil {
 		t.Fatalf("leaf delete: %v", err)
 	}
 	if len(inner.deleted) != 1 || inner.deleted[0] != "leaf" {
@@ -293,7 +293,7 @@ func TestDelete_GuardRefusesSourceWithDerivatives(t *testing.T) {
 func TestDelete_WithoutGuardDelegates(t *testing.T) {
 	inner := &fakeDataStore{}
 	s := wrapStore(t, Config{}, nil, inner)
-	if err := s.Delete(context.Background(), "source"); err != nil {
+	if err := s.Delete(t.Context(), "source"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if len(inner.deleted) != 1 {

@@ -2,43 +2,10 @@ package provenance
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"scrinium.dev/domain"
 )
-
-// ErrBadProduction — a production record is malformed and the artifact is not
-// written: relation kinds that do not match the inputs, an empty kind, a
-// duplicate input, an operation missing where there are inputs, params that
-// are not JSON. It fires in the wrapper, before the core Put, so a bad record
-// never reaches the manifest. Shape limits on the edges themselves (the count
-// cap, empty or duplicate refs) stay with the core.
-var ErrBadProduction = errors.New("provenance: bad production record")
-
-// ErrHasDerivatives — a Delete was refused because the artifact still has
-// derivatives (incoming consumption edges). Until the core accounts for
-// artifact→artifact edges this guard is the only protection a source has, and
-// it lives in the wrapper: a deployment without this extension does not have
-// it.
-var ErrHasDerivatives = errors.New("provenance: artifact has derivatives")
-
-// ErrBadReceipt — an eviction receipt is malformed: no reason stated, no
-// decider, an undecodable or wrongly-versioned document, or one that names no
-// evicted artifact. An eviction whose explanation cannot be read is not an
-// explanation, so the receipt is refused before anything is written.
-var ErrBadReceipt = errors.New("provenance: bad eviction receipt")
-
-// ErrReceiptProtected — an attempt to delete a receipt. A receipt is the only
-// surviving explanation of bytes that are already gone; deleting it would leave
-// a dangling reference with no account of why, which is the state eviction
-// exists to avoid.
-var ErrReceiptProtected = errors.New("provenance: receipt cannot be deleted")
-
-// ErrForked — a supersede chain branches: more than one artifact claims to
-// replace the same one. Detecting the fork is mechanical; choosing the winner
-// is a policy this extension does not have.
-var ErrForked = errors.New("provenance: superseded by more than one artifact")
 
 // Input is one edge of a production record: which artifact was consumed, and
 // as what. Rel is an opaque kind — the host's vocabulary ("derived",

@@ -44,7 +44,7 @@ func harness(t *testing.T, cfg provenance.Config) (store.DataStore, *provenance.
 
 	st := storefx.Init(t, store.WithStoreIndex(idx))
 
-	f, ok := provenance.ExtensionFor(pidx, cfg).Wrapper()
+	f, ok := provenance.ExtensionFor(pidx).Wrapper()
 	if !ok {
 		t.Fatal("provenance occupies no behavior axis")
 	}
@@ -343,7 +343,7 @@ func TestIntegration_EvictSourceKeepDerivatives(t *testing.T) {
 		t.Fatalf("unexplained delete: want ErrHasDerivatives, got %v", err)
 	}
 
-	ev, err := provenance.NewEvictor(s, pidx, provenance.Config{GuardDeletes: true})
+	ev, err := provenance.NewEvictor(s, pidx)
 	if err != nil {
 		t.Fatalf("NewEvictor: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestIntegration_EvictIsIdempotent(t *testing.T) {
 		Repro:  true,
 	}))
 
-	ev, err := provenance.NewEvictor(s, pidx, provenance.Config{GuardDeletes: true})
+	ev, err := provenance.NewEvictor(s, pidx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func TestIntegration_EvictRefusesUnexplained(t *testing.T) {
 		Repro:  true,
 	}))
 
-	ev, _ := provenance.NewEvictor(s, pidx, provenance.Config{GuardDeletes: true})
+	ev, _ := provenance.NewEvictor(s, pidx)
 	if err := ev.Evict(ctx, src, provenance.ReceiptSpec{Reason: "ocr-complete"}); !errors.Is(err, provenance.ErrBadReceipt) {
 		t.Fatalf("want ErrBadReceipt, got %v", err)
 	}
@@ -461,7 +461,7 @@ func TestIntegration_ReceiptIsProtected(t *testing.T) {
 		Op:     "ocr",
 		Repro:  true,
 	}))
-	ev, _ := provenance.NewEvictor(s, pidx, provenance.Config{GuardDeletes: true})
+	ev, _ := provenance.NewEvictor(s, pidx)
 	if err := ev.Evict(ctx, src, provenance.ReceiptSpec{Reason: "ocr-complete", DecidedBy: "roman"}); err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +508,7 @@ func TestIntegration_EvictedIsNotOfferedWork(t *testing.T) {
 		t.Fatalf("setup: both books owe a thumbnail, got %v", owed())
 	}
 
-	ev, _ := provenance.NewEvictor(s, pidx, provenance.Config{GuardDeletes: true})
+	ev, _ := provenance.NewEvictor(s, pidx)
 	if err := ev.Evict(ctx, bookA, provenance.ReceiptSpec{Reason: "space", DecidedBy: "roman"}); err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +545,7 @@ func TestIntegration_CleanableAfterEviction(t *testing.T) {
 		t.Fatalf("text should be cleanable while the pdf lives: (%v, %v)", ok, err)
 	}
 
-	ev, _ := provenance.NewEvictor(s, pidx, provenance.Config{GuardDeletes: true})
+	ev, _ := provenance.NewEvictor(s, pidx)
 	if err := ev.Evict(ctx, pdf, provenance.ReceiptSpec{
 		Retained: []domain.ArtifactID{text}, Reason: "ocr-complete", DecidedBy: "roman",
 	}); err != nil {
@@ -554,5 +554,55 @@ func TestIntegration_CleanableAfterEviction(t *testing.T) {
 
 	if ok, err := pidx.Cleanable(ctx, text, alive); err != nil || ok {
 		t.Fatalf("text must not be cleanable once its source is evicted: (%v, %v)", ok, err)
+	}
+}
+
+// The receipt is written outside the caller's session on purpose: rolling back an
+// eviction batch must not erase the explanations of artifacts that are already
+// gone (ADR-113 П-6).
+func TestIntegration_ReceiptSurvivesSessionRollback(t *testing.T) {
+	ctx := context.Background()
+	s, pidx := harness(t, provenance.Config{GuardDeletes: true})
+
+	sess := domain.SessionID("eviction-batch-1")
+	src := put(t, s, "source", domain.WithSession(sess))
+	text := put(t, s, "text", domain.WithSession(sess),
+		provenance.WithProduction(provenance.Production{
+			Inputs: []provenance.Input{{Ref: domain.HandleRef(src), Rel: "text"}},
+			Op:     "ocr",
+			Repro:  true,
+		}))
+
+	ev, err := provenance.NewEvictor(s, pidx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ev.Evict(ctx, src, provenance.ReceiptSpec{
+		Retained: []domain.ArtifactID{text}, Reason: "ocr-complete", DecidedBy: "roman",
+	}); err != nil {
+		t.Fatalf("Evict: %v", err)
+	}
+	rid, has, err := pidx.Receipt(ctx, src)
+	if err != nil || !has {
+		t.Fatalf("no receipt: %v", err)
+	}
+
+	admin, ok := s.(interface {
+		RollbackSession(context.Context, domain.SessionID) error
+	})
+	if !ok {
+		t.Skip("store handle does not expose RollbackSession")
+	}
+	if err := admin.RollbackSession(ctx, sess); err != nil {
+		t.Fatalf("RollbackSession: %v", err)
+	}
+
+	// The batch is gone; the explanation is not.
+	if _, err := s.Get(ctx, rid); err != nil {
+		t.Fatalf("rollback destroyed the receipt: %v", err)
+	}
+	r, has, err := ev.ReadReceipt(ctx, src)
+	if err != nil || !has || r.Evicted.Artifact != src {
+		t.Fatalf("receipt unreadable after rollback: has=%v err=%v", has, err)
 	}
 }

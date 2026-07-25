@@ -25,42 +25,6 @@ type derivativeLookup interface {
 	IsReceipt(ctx context.Context, id domain.ArtifactID) (bool, error)
 }
 
-// Config tunes the extension. The zero value is valid.
-type Config struct {
-	// SupersedeRel is one of the two relation kinds this extension interprets:
-	// the chains it resolves to a head. Empty means DefaultSupersedeRel. A host
-	// with its own word for replacement names it here; every other kind stays
-	// opaque either way.
-	SupersedeRel string
-
-	// EvictRel is the other: the kind of edge a receipt carries to the artifact
-	// whose disappearance it explains (ADR-113). Empty means DefaultEvictRel.
-	// Deliberately distinct from SupersedeRel — "what is current" and "where did
-	// the bytes go" are different questions.
-	EvictRel string
-
-	// GuardDeletes turns on the interim protection of sources: a Delete of an
-	// artifact that still has derivatives is refused with ErrHasDerivatives.
-	// It requires the index (the lookup), and it exists because the core does
-	// not yet account for artifact→artifact edges; when it does, the core's
-	// accounting supersedes this guard and the flag goes away.
-	GuardDeletes bool
-}
-
-func (c Config) supersedeRel() string {
-	if c.SupersedeRel == "" {
-		return DefaultSupersedeRel
-	}
-	return c.SupersedeRel
-}
-
-func (c Config) evictRel() string {
-	if c.EvictRel == "" {
-		return DefaultEvictRel
-	}
-	return c.EvictRel
-}
-
 // factory builds the provenance data-plane wrapper. It is Behavioral and
 // order-free (ADR-75/88): it changes no blob physics and no addressing — only
 // what metadata a manifest carries, and whether a delete is allowed.

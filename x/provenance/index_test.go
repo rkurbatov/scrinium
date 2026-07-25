@@ -1,11 +1,7 @@
 package provenance
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
-	"sort"
-	"strings"
 	"testing"
 
 	"scrinium.dev/domain"
@@ -13,127 +9,50 @@ import (
 	"scrinium.dev/present"
 )
 
-// --- in-memory Substrate ---
+// --- contract ---
 
-// memSub is a minimal Substrate: per-table maps with lexicographic Scan. It
-// mirrors the contract the sqlite backend provides, which is all the index
-// depends on.
-type memSub struct {
-	tables map[string]map[string][]byte
-}
-
-func newMemSub() *memSub { return &memSub{tables: map[string]map[string][]byte{}} }
-
-func (m *memSub) Put(table, key string, value []byte) error {
-	t, ok := m.tables[table]
-	if !ok {
-		t = map[string][]byte{}
-		m.tables[table] = t
+func TestIndex_SetupRefusesUnknownVersionAndCloses(t *testing.T) {
+	idx := NewIndex(Config{})
+	if err := idx.Setup(t.Context(), nil, 99); err == nil {
+		t.Fatal("an unknown stored schema version was accepted")
 	}
-	t[key] = value
-	return nil
-}
-
-func (m *memSub) Get(table, key string) ([]byte, bool, error) {
-	v, ok := m.tables[table][key]
-	return v, ok, nil
-}
-
-func (m *memSub) Delete(table, key string) error { delete(m.tables[table], key); return nil }
-
-func (m *memSub) DeletePrefix(table, prefix string) error {
-	if prefix == "" {
-		return customindex.ErrEmptyPrefix
+	// A refused Setup must not leave the index usable.
+	if _, err := idx.Parents(t.Context(), aid("a")); err == nil {
+		t.Fatal("index answered after a refused Setup")
 	}
-	for k := range m.tables[table] {
-		if strings.HasPrefix(k, prefix) {
-			delete(m.tables[table], k)
-		}
+
+	idx, _ = newIndex(t, Config{})
+	if err := idx.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
-	return nil
-}
-
-func (m *memSub) Scan(table, prefix string, cb func(string, []byte) error) error {
-	keys := make([]string, 0, len(m.tables[table]))
-	for k := range m.tables[table] {
-		if strings.HasPrefix(k, prefix) {
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		if err := cb(k, m.tables[table][k]); err != nil {
-			if errors.Is(err, customindex.ErrStopScan) {
-				return nil
-			}
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *memSub) Inc(table, key string, delta int64) (int64, error) {
-	return 0, customindex.ErrIncOutsideApply
-}
-
-func (m *memSub) rows(table string) int { return len(m.tables[table]) }
-
-// --- fixtures ---
-
-func setupIndex(t *testing.T, cfg Config) (*Index, *memSub) {
-	t.Helper()
-	idx, sub := NewIndex(cfg), newMemSub()
-	if err := idx.Setup(context.Background(), sub, 0); err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
-	return idx, sub
-}
-
-func id(c string) domain.ArtifactID { return domain.ArtifactID(strings.Repeat(c, 8)) }
-
-// record builds a manifest as the wrapper would have written it: edges in the
-// core half, meaning in Ext.
-func record(child domain.ArtifactID, op string, outcome Outcome, inputs ...Input) domain.Manifest {
-	block := Block{V: SchemaVersion, Op: op, Outcome: outcome, Repro: true}
-	refs := make([]domain.HandleRef, 0, len(inputs))
-	for _, in := range inputs {
-		block.Rel = append(block.Rel, in.Rel)
-		refs = append(refs, in.Ref)
-	}
-	if op != "" {
-		block.PKey, _ = ParamsKey(op, nil)
-	}
-	ext, err := stamp(nil, block)
-	if err != nil {
-		panic(err)
-	}
-	return domain.Manifest{ArtifactID: child, HandleRefs: refs, Ext: ext}
-}
-
-func indexAll(t *testing.T, idx *Index, sub *memSub, ms ...domain.Manifest) {
-	t.Helper()
-	for _, m := range ms {
-		if _, err := idx.Index(context.Background(), sub, m); err != nil {
-			t.Fatalf("Index %s: %v", m.ArtifactID, err)
-		}
+	if _, err := idx.Parents(t.Context(), aid("a")); err == nil {
+		t.Fatal("index answered after Close")
 	}
 }
 
-func ids(list []domain.ArtifactID) []string {
-	out := make([]string, len(list))
-	for i, v := range list {
-		out[i] = string(v)
+func TestIndex_ReadsBeforeRegistrationAreRefused(t *testing.T) {
+	idx := NewIndex(Config{})
+	if _, err := idx.Parents(t.Context(), aid("a")); err == nil {
+		t.Fatal("an unregistered index answered a query")
 	}
-	sort.Strings(out)
-	return out
 }
 
-// --- traversal in both directions ---
+// A relation kind carrying the key separator would corrupt every composite key
+// in the index, so it is refused at write time.
+func TestIndex_RejectsSeparatorInRelation(t *testing.T) {
+	idx, sub := newIndex(t, Config{})
+	m := record(aid("b"), "ocr", OutcomeOK, Input{Ref: domain.HandleRef(aid("a")), Rel: "te\x00xt"})
+	if _, err := idx.Index(t.Context(), sub, m); !errors.Is(err, ErrBadProduction) {
+		t.Fatalf("want ErrBadProduction, got %v", err)
+	}
+}
+
+// --- traversal ---
 
 func TestIndex_ParentsAndChildren(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	src, page1, page2, full := id("a"), id("b"), id("c"), id("d")
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	src, page1, page2, full := aid("a"), aid("b"), aid("c"), aid("d")
 
 	indexAll(t, idx, sub,
 		record(page1, "split", OutcomeOK, Input{Ref: domain.HandleRef(src), Rel: "page"}),
@@ -148,8 +67,8 @@ func TestIndex_ParentsAndChildren(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ids(kids); len(got) != 2 {
-		t.Fatalf("children of the source = %v", got)
+	if len(sortedIDs(kids)) != 2 {
+		t.Fatalf("children of the source = %v", kids)
 	}
 	if kids, _ := idx.Children(ctx, src, "part"); len(kids) != 0 {
 		t.Errorf("children of another kind leaked: %v", kids)
@@ -168,9 +87,9 @@ func TestIndex_ParentsAndChildren(t *testing.T) {
 }
 
 func TestIndex_WalkUpAndDownAcrossLayers(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	pdf, text, chunk := id("a"), id("b"), id("c")
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	pdf, text, chunk := aid("a"), aid("b"), aid("c")
 
 	indexAll(t, idx, sub,
 		record(text, "ocr", OutcomeOK, Input{Ref: domain.HandleRef(pdf), Rel: "derived"}),
@@ -178,7 +97,7 @@ func TestIndex_WalkUpAndDownAcrossLayers(t *testing.T) {
 	)
 
 	var down []string
-	if err := idx.WalkDown(ctx, pdf, 0, func(v domain.ArtifactID, level int) error {
+	if err := idx.WalkDown(ctx, pdf, 0, func(v domain.ArtifactID, _ int) error {
 		down = append(down, string(v))
 		return nil
 	}); err != nil {
@@ -188,7 +107,6 @@ func TestIndex_WalkUpAndDownAcrossLayers(t *testing.T) {
 		t.Fatalf("cascade enumeration = %v", down)
 	}
 
-	// Depth limits the walk to one layer.
 	var oneLevel []string
 	if err := idx.WalkDown(ctx, pdf, 1, func(v domain.ArtifactID, _ int) error {
 		oneLevel = append(oneLevel, string(v))
@@ -212,17 +130,17 @@ func TestIndex_WalkUpAndDownAcrossLayers(t *testing.T) {
 	}
 }
 
-// A cycle cannot occur in a WORM store, but a corrupt or foreign graph must
-// not spin the walker.
+// A cycle cannot occur in a WORM store, but a corrupt or foreign graph must not
+// spin the walker.
 func TestIndex_WalkTerminatesOnCycle(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	a, b := id("a"), id("b")
+	idx, sub := newIndex(t, Config{})
+	a, b := aid("a"), aid("b")
 	indexAll(t, idx, sub,
 		record(b, "x", OutcomeOK, Input{Ref: domain.HandleRef(a), Rel: "derived"}),
 		record(a, "x", OutcomeOK, Input{Ref: domain.HandleRef(b), Rel: "derived"}),
 	)
 	visited := 0
-	if err := idx.WalkDown(context.Background(), a, 0, func(domain.ArtifactID, int) error {
+	if err := idx.WalkDown(t.Context(), a, 0, func(domain.ArtifactID, int) error {
 		visited++
 		if visited > 10 {
 			t.Fatal("walker did not terminate")
@@ -233,13 +151,41 @@ func TestIndex_WalkTerminatesOnCycle(t *testing.T) {
 	}
 }
 
-// --- holes: the planner's entire state ---
+// An error from the callback is how a consumer stops a walk; it must come back
+// unchanged rather than being swallowed or wrapped into something unrecognisable.
+func TestIndex_WalkPropagatesCallbackError(t *testing.T) {
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	a, b, c := aid("a"), aid("b"), aid("c")
+	indexAll(t, idx, sub,
+		record(b, "x", OutcomeOK, Input{Ref: domain.HandleRef(a), Rel: "derived"}),
+		record(c, "x", OutcomeOK, Input{Ref: domain.HandleRef(b), Rel: "derived"}),
+	)
+
+	stop := errors.New("enough")
+	seen := 0
+	cb := func(domain.ArtifactID, int) error {
+		seen++
+		return stop
+	}
+	if err := idx.WalkDown(ctx, a, 0, cb); !errors.Is(err, stop) {
+		t.Fatalf("WalkDown swallowed the callback error: %v", err)
+	}
+	if seen != 1 {
+		t.Errorf("walk continued after the callback stopped it: %d visits", seen)
+	}
+	if err := idx.WalkUp(ctx, c, 0, func(domain.ArtifactID, int) error { return stop }); !errors.Is(err, stop) {
+		t.Fatalf("WalkUp swallowed the callback error: %v", err)
+	}
+}
+
+// --- planning ---
 
 func TestIndex_Holes(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	bookA, bookB := id("a"), id("b")
-	textA, textB, chunkA := id("c"), id("d"), id("e")
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	bookA, bookB := aid("a"), aid("b")
+	textA, textB, chunkA := aid("c"), aid("d"), aid("e")
 
 	indexAll(t, idx, sub,
 		record(textA, "ocr", OutcomeOK, Input{Ref: domain.HandleRef(bookA), Rel: "text"}),
@@ -247,40 +193,90 @@ func TestIndex_Holes(t *testing.T) {
 		record(chunkA, "chunk", OutcomeOK, Input{Ref: domain.HandleRef(bookA), Rel: "chunk"}),
 	)
 
-	var owed []string
-	if err := idx.Holes(ctx, HoleQuery{Has: "text", Missing: "chunk"}, func(v domain.ArtifactID) error {
-		owed = append(owed, string(v))
-		return nil
-	}); err != nil {
-		t.Fatal(err)
+	collect := func() []string {
+		var out []string
+		if err := idx.Holes(ctx, HoleQuery{Has: "text", Missing: "chunk"}, func(v domain.ArtifactID) error {
+			out = append(out, string(v))
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return out
 	}
+	owed := collect()
 	if len(owed) != 1 || owed[0] != string(bookB) {
 		t.Fatalf("holes = %v, want only the un-chunked book", owed)
 	}
 
 	// Filling the hole removes it from the answer — no queue entry to retire.
-	indexAll(t, idx, sub, record(id("f"), "chunk", OutcomeOK, Input{Ref: domain.HandleRef(bookB), Rel: "chunk"}))
-	owed = nil
-	if err := idx.Holes(ctx, HoleQuery{Has: "text", Missing: "chunk"}, func(v domain.ArtifactID) error {
-		owed = append(owed, string(v))
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if len(owed) != 0 {
+	indexAll(t, idx, sub, record(aid("f"), "chunk", OutcomeOK, Input{Ref: domain.HandleRef(bookB), Rel: "chunk"}))
+	if owed := collect(); len(owed) != 0 {
 		t.Fatalf("filled hole still reported: %v", owed)
+	}
+}
+
+// The two candidate shapes are different questions, and a query must name exactly
+// one: a chained pipeline asks "is a text, has no chunks", a star topology asks
+// "has a text, has no thumbnail".
+func TestIndex_HoleQueryShapes(t *testing.T) {
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	book, text := aid("a"), aid("b")
+
+	indexAll(t, idx, sub, record(text, "ocr", OutcomeOK, Input{Ref: domain.HandleRef(book), Rel: "text"}))
+
+	collect := func(q HoleQuery) []string {
+		var out []string
+		if err := idx.Holes(ctx, q, func(v domain.ArtifactID) error {
+			out = append(out, string(v))
+			return nil
+		}); err != nil {
+			t.Fatalf("Holes(%+v): %v", q, err)
+		}
+		return out
+	}
+
+	if got := collect(HoleQuery{Is: "text", Missing: "chunk"}); len(got) != 1 || got[0] != string(text) {
+		t.Errorf("Is-shape holes = %v, want the text", got)
+	}
+	if got := collect(HoleQuery{Has: "text", Missing: "thumb"}); len(got) != 1 || got[0] != string(book) {
+		t.Errorf("Has-shape holes = %v, want the book", got)
+	}
+
+	for _, bad := range []HoleQuery{
+		{Missing: "chunk"},
+		{Is: "text"},
+		{Is: "text", Has: "text", Missing: "chunk"},
+	} {
+		if err := idx.Holes(ctx, bad, func(domain.ArtifactID) error { return nil }); err == nil {
+			t.Errorf("malformed query accepted: %+v", bad)
+		}
+	}
+}
+
+func TestIndex_HolesPropagatesCallbackError(t *testing.T) {
+	idx, sub := newIndex(t, Config{})
+	indexAll(t, idx, sub,
+		record(aid("b"), "ocr", OutcomeOK, Input{Ref: domain.HandleRef(aid("a")), Rel: "text"}),
+	)
+	stop := errors.New("enough")
+	err := idx.Holes(t.Context(), HoleQuery{Is: "text", Missing: "chunk"}, func(domain.ArtifactID) error {
+		return stop
+	})
+	if !errors.Is(err, stop) {
+		t.Fatalf("Holes swallowed the callback error: %v", err)
 	}
 }
 
 // Failures are records; quarantine is a threshold on their count, not a state.
 func TestIndex_FailuresAndQuarantine(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	book, text := id("a"), id("b")
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	book, text := aid("a"), aid("b")
 
 	indexAll(t, idx, sub, record(text, "ocr", OutcomeOK, Input{Ref: domain.HandleRef(book), Rel: "text"}))
 	for _, attempt := range []string{"f", "g", "h"} {
-		indexAll(t, idx, sub, record(id(attempt), "chunk", OutcomeFailed,
+		indexAll(t, idx, sub, record(aid(attempt), "chunk", OutcomeFailed,
 			Input{Ref: domain.HandleRef(book), Rel: "chunk"}))
 	}
 
@@ -292,13 +288,10 @@ func TestIndex_FailuresAndQuarantine(t *testing.T) {
 		t.Fatalf("failures = %d, want 3", n)
 	}
 
-	// Under the threshold the source is still offered work; at it, it drops out.
 	count := func(max int) int {
 		seen := 0
-		if err := idx.Holes(ctx, HoleQuery{Has: "text", Missing: "chunk", MaxFailures: max}, func(domain.ArtifactID) error {
-			seen++
-			return nil
-		}); err != nil {
+		if err := idx.Holes(ctx, HoleQuery{Has: "text", Missing: "chunk", MaxFailures: max},
+			func(domain.ArtifactID) error { seen++; return nil }); err != nil {
 			t.Fatal(err)
 		}
 		return seen
@@ -316,176 +309,12 @@ func TestIndex_FailuresAndQuarantine(t *testing.T) {
 	}
 }
 
-func TestIndex_DoneIsIdempotencyOverInputsAndParams(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	src, out := id("a"), id("b")
-
-	indexAll(t, idx, sub, record(out, "ocr", OutcomeOK, Input{Ref: domain.HandleRef(src), Rel: "derived"}))
-
-	got, ok, err := idx.Done(ctx, mustPKey(t, "ocr"), []domain.HandleRef{domain.HandleRef(src)})
-	if err != nil || !ok || got != out {
-		t.Fatalf("Done = (%s, %v, %v)", got, ok, err)
-	}
-	// Other inputs, same work — not done.
-	if _, ok, _ := idx.Done(ctx, mustPKey(t, "ocr"), []domain.HandleRef{domain.HandleRef(id("z"))}); ok {
-		t.Error("work on other inputs reported as done")
-	}
-	// Same inputs, other operation — not done.
-	if _, ok, _ := idx.Done(ctx, mustPKey(t, "thumbnail"), []domain.HandleRef{domain.HandleRef(src)}); ok {
-		t.Error("other work reported as done")
-	}
-}
-
-// --- supersede chains ---
-
-func TestIndex_HeadResolvesChainAndDetectsFork(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	v1, v2, v3 := id("a"), id("b"), id("c")
-
-	indexAll(t, idx, sub,
-		record(v2, "merge", OutcomeOK, Input{Ref: domain.HandleRef(v1), Rel: DefaultSupersedeRel}),
-		record(v3, "merge", OutcomeOK, Input{Ref: domain.HandleRef(v2), Rel: DefaultSupersedeRel}),
-	)
-
-	head, err := idx.Head(ctx, v1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if head != v3 {
-		t.Fatalf("head = %s, want the last replacement %s", head, v3)
-	}
-	// An artifact nobody replaced is its own head.
-	if h, err := idx.Head(ctx, v3); err != nil || h != v3 {
-		t.Fatalf("Head of a live artifact = (%s, %v)", h, err)
-	}
-
-	// Two claimants: mechanical detection, no arbitration.
-	indexAll(t, idx, sub, record(id("d"), "merge", OutcomeOK,
-		Input{Ref: domain.HandleRef(v2), Rel: DefaultSupersedeRel}))
-	if _, err := idx.Head(ctx, v1); !errors.Is(err, ErrForked) {
-		t.Fatalf("want ErrForked, got %v", err)
-	}
-}
-
-// The supersede kind is configurable; every other kind stays opaque.
-func TestIndex_SupersedeRelIsConfigurable(t *testing.T) {
-	idx, sub := setupIndex(t, Config{SupersedeRel: "replaces"})
-	prev, next := id("a"), id("b")
-	indexAll(t, idx, sub, record(next, "merge", OutcomeOK,
-		Input{Ref: domain.HandleRef(prev), Rel: "replaces"}))
-
-	if h, err := idx.Head(context.Background(), prev); err != nil || h != next {
-		t.Fatalf("configured supersede kind not followed: (%s, %v)", h, err)
-	}
-}
-
-// --- derivability: unindex is symmetric, rebuild replays ---
-
-func TestIndex_UnindexRemovesEverythingItWrote(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	m := record(id("b"), "ocr", OutcomeOK, Input{Ref: domain.HandleRef(id("a")), Rel: DefaultSupersedeRel})
-
-	indexAll(t, idx, sub, m)
-	before := map[string]int{}
-	for _, tbl := range []string{tableByParent, tableByChild, tableByRel, tableRecords, tableOps, tableHeads} {
-		before[tbl] = sub.rows(tbl)
-		if before[tbl] == 0 {
-			t.Fatalf("table %s stayed empty", tbl)
-		}
-	}
-
-	if err := idx.Unindex(ctx, sub, m); err != nil {
-		t.Fatalf("Unindex: %v", err)
-	}
-	for tbl := range before {
-		if n := sub.rows(tbl); n != 0 {
-			t.Errorf("table %s still has %d rows after Unindex", tbl, n)
-		}
-	}
-
-	// Idempotent: a replay after crash recovery must converge, not error.
-	if err := idx.Unindex(ctx, sub, m); err != nil {
-		t.Fatalf("second Unindex: %v", err)
-	}
-}
-
-// An origin — an artifact with no production record — is not this index's
-// concern and must leave no rows.
-func TestIndex_ManifestWithoutRecordIsSkipped(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	m := domain.Manifest{ArtifactID: id("a"), Ext: json.RawMessage(`{"vfsmeta":{"path":"/x"}}`)}
-	if _, err := idx.Index(context.Background(), sub, m); err != nil {
-		t.Fatalf("Index: %v", err)
-	}
-	for _, tbl := range []string{tableByParent, tableByChild, tableByRel, tableRecords, tableOps, tableHeads} {
-		if n := sub.rows(tbl); n != 0 {
-			t.Errorf("origin wrote %d rows into %s", n, tbl)
-		}
-	}
-}
-
-// A stored record whose meaning does not line up with its edges is corrupt;
-// indexing must refuse rather than build half a graph.
-func TestIndex_RefusesMisalignedRecord(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	block := Block{V: SchemaVersion, Op: "ocr", Rel: []string{"derived"}}
-	ext, err := stamp(nil, block)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := domain.Manifest{
-		ArtifactID: id("b"),
-		HandleRefs: []domain.HandleRef{domain.HandleRef(id("a")), domain.HandleRef(id("c"))},
-		Ext:        ext,
-	}
-	if _, err := idx.Index(context.Background(), sub, m); !errors.Is(err, ErrBadProduction) {
-		t.Fatalf("want ErrBadProduction, got %v", err)
-	}
-}
-
-func TestIndex_ReadsBeforeRegistrationAreRefused(t *testing.T) {
-	idx := NewIndex(Config{})
-	if _, err := idx.Parents(context.Background(), id("a")); err == nil {
-		t.Fatal("an unregistered index answered a query")
-	}
-}
-
-func TestIndex_PresentsItsOwnSchema(t *testing.T) {
-	idx, _ := setupIndex(t, Config{})
-	schemas := idx.PresentedSchemas()
-	if len(schemas) != 1 || schemas[0].Key != Key {
-		t.Fatalf("presented schemas = %+v", schemas)
-	}
-	m := record(id("b"), "ocr", OutcomeOK, Input{Ref: domain.HandleRef(id("a")), Rel: "derived"})
-	rep, ok, err := schemas[0].Present(m.Ext)
-	if err != nil || !ok {
-		t.Fatalf("Present: ok=%v err=%v", ok, err)
-	}
-	if rep.Title == "" || len(rep.Fields) == 0 {
-		t.Errorf("empty representation: %+v", rep)
-	}
-	var _ present.Registry // the registry this feeds is assembled by the host
-}
-
-func mustPKey(t *testing.T, op string) string {
-	t.Helper()
-	k, err := ParamsKey(op, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return k
-}
-
-// A failed attempt is an edge in the graph but not a result: traversal shows
-// it, planning does not count it. This is the distinction the hole query rests
-// on — without it a stage that keeps breaking would look complete.
+// A failed attempt is an edge in the graph but not a result: traversal shows it,
+// planning does not count it.
 func TestIndex_FailedAttemptIsAnEdgeButNotAResult(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	src, attempt := id("a"), id("b")
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	src, attempt := aid("a"), aid("b")
 
 	indexAll(t, idx, sub, record(attempt, "ocr", OutcomeFailed,
 		Input{Ref: domain.HandleRef(src), Rel: "text"}))
@@ -507,89 +336,185 @@ func TestIndex_FailedAttemptIsAnEdgeButNotAResult(t *testing.T) {
 	if has, _ := idx.HasResultOf(ctx, src, "text"); has {
 		t.Error("HasResultOf true for a failed attempt only")
 	}
-	// It still pins its source: the attempt references it.
 	if has, _ := idx.HasChildren(ctx, src); !has {
 		t.Error("a failed attempt should still pin its source")
 	}
 }
 
-// The two candidate shapes are different questions, and a query must name
-// exactly one: a chained pipeline asks "is a text, has no chunks", a star
-// topology asks "has a text, has no thumbnail".
-func TestIndex_HoleQueryShapes(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	book, text := id("a"), id("b")
+func TestIndex_DoneIsIdempotencyOverInputsAndParams(t *testing.T) {
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	src, out := aid("a"), aid("b")
 
-	indexAll(t, idx, sub, record(text, "ocr", OutcomeOK, Input{Ref: domain.HandleRef(book), Rel: "text"}))
+	indexAll(t, idx, sub, record(out, "ocr", OutcomeOK, Input{Ref: domain.HandleRef(src), Rel: "derived"}))
 
-	collect := func(q HoleQuery) []string {
-		var out []string
-		if err := idx.Holes(ctx, q, func(v domain.ArtifactID) error {
-			out = append(out, string(v))
-			return nil
-		}); err != nil {
-			t.Fatalf("Holes(%+v): %v", q, err)
+	got, ok, err := idx.Done(ctx, mustPKey(t, "ocr"), []domain.HandleRef{domain.HandleRef(src)})
+	if err != nil || !ok || got != out {
+		t.Fatalf("Done = (%s, %v, %v)", got, ok, err)
+	}
+	if _, ok, _ := idx.Done(ctx, mustPKey(t, "ocr"), []domain.HandleRef{domain.HandleRef(aid("z"))}); ok {
+		t.Error("work on other inputs reported as done")
+	}
+	if _, ok, _ := idx.Done(ctx, mustPKey(t, "thumbnail"), []domain.HandleRef{domain.HandleRef(src)}); ok {
+		t.Error("other work reported as done")
+	}
+	// A record with no operation has no work identity and claims nothing.
+	if _, ok, err := idx.Done(ctx, "", []domain.HandleRef{domain.HandleRef(src)}); err != nil || ok {
+		t.Errorf("empty work key matched something: ok=%v err=%v", ok, err)
+	}
+}
+
+// --- currency ---
+
+func TestIndex_HeadResolvesChainAndDetectsFork(t *testing.T) {
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	v1, v2, v3 := aid("a"), aid("b"), aid("c")
+
+	indexAll(t, idx, sub,
+		record(v2, "merge", OutcomeOK, Input{Ref: domain.HandleRef(v1), Rel: DefaultSupersedeRel}),
+		record(v3, "merge", OutcomeOK, Input{Ref: domain.HandleRef(v2), Rel: DefaultSupersedeRel}),
+	)
+
+	head, err := idx.Head(ctx, v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head != v3 {
+		t.Fatalf("head = %s, want the last replacement %s", head, v3)
+	}
+	if h, err := idx.Head(ctx, v3); err != nil || h != v3 {
+		t.Fatalf("Head of a live artifact = (%s, %v)", h, err)
+	}
+
+	indexAll(t, idx, sub, record(aid("d"), "merge", OutcomeOK,
+		Input{Ref: domain.HandleRef(v2), Rel: DefaultSupersedeRel}))
+	if _, err := idx.Head(ctx, v1); !errors.Is(err, ErrForked) {
+		t.Fatalf("want ErrForked, got %v", err)
+	}
+}
+
+func TestIndex_SupersedeRelIsConfigurable(t *testing.T) {
+	idx, sub := newIndex(t, Config{SupersedeRel: "replaces"})
+	prev, next := aid("a"), aid("b")
+	indexAll(t, idx, sub, record(next, "merge", OutcomeOK,
+		Input{Ref: domain.HandleRef(prev), Rel: "replaces"}))
+
+	if h, err := idx.Head(t.Context(), prev); err != nil || h != next {
+		t.Fatalf("configured supersede kind not followed: (%s, %v)", h, err)
+	}
+}
+
+// --- derivability ---
+
+func TestIndex_UnindexRemovesEverythingItWrote(t *testing.T) {
+	idx, sub := newIndex(t, Config{})
+	ctx := t.Context()
+	m := record(aid("b"), "ocr", OutcomeOK, Input{Ref: domain.HandleRef(aid("a")), Rel: DefaultSupersedeRel})
+
+	indexAll(t, idx, sub, m)
+	for _, tbl := range allTables() {
+		if sub.Rows(tbl) == 0 {
+			t.Fatalf("table %s stayed empty", tbl)
 		}
-		return out
 	}
 
-	// Chained: the text itself owes chunks.
-	if got := collect(HoleQuery{Is: "text", Missing: "chunk"}); len(got) != 1 || got[0] != string(text) {
-		t.Errorf("Is-shape holes = %v, want the text", got)
+	if err := idx.Unindex(ctx, sub, m); err != nil {
+		t.Fatalf("Unindex: %v", err)
 	}
-	// Star: the book has a text and owes a thumbnail.
-	if got := collect(HoleQuery{Has: "text", Missing: "thumb"}); len(got) != 1 || got[0] != string(book) {
-		t.Errorf("Has-shape holes = %v, want the book", got)
+	if left := sub.Tables(); len(left) != 0 {
+		t.Errorf("tables still populated after Unindex: %v", left)
 	}
-
-	for _, bad := range []HoleQuery{
-		{Missing: "chunk"},
-		{Is: "text"},
-		{Is: "text", Has: "text", Missing: "chunk"},
-	} {
-		if err := idx.Holes(ctx, bad, func(domain.ArtifactID) error { return nil }); err == nil {
-			t.Errorf("malformed query accepted: %+v", bad)
-		}
+	if err := idx.Unindex(ctx, sub, m); err != nil {
+		t.Fatalf("second Unindex: %v", err)
 	}
 }
 
 // Deletion must work from identity alone: at delete time the manifest body is
 // gone, so the index recovers what it wrote from its own tables.
 func TestIndex_UnindexFromIdentityAlone(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
-	ctx := context.Background()
-	m := record(id("b"), "ocr", OutcomeOK, Input{Ref: domain.HandleRef(id("a")), Rel: DefaultSupersedeRel})
+	idx, sub := newIndex(t, Config{})
+	m := record(aid("b"), "ocr", OutcomeOK, Input{Ref: domain.HandleRef(aid("a")), Rel: DefaultSupersedeRel})
 	indexAll(t, idx, sub, m)
 
-	// Exactly what the core passes on delete: identity, no Ext, no edges.
 	bare := domain.Manifest{ArtifactID: m.ArtifactID, Digest: m.Digest}
-	if err := idx.Unindex(ctx, sub, bare); err != nil {
+	if err := idx.Unindex(t.Context(), sub, bare); err != nil {
 		t.Fatalf("Unindex: %v", err)
 	}
-	for _, tbl := range []string{tableByParent, tableByChild, tableByRel, tableRecords, tableOps, tableHeads} {
-		if n := sub.rows(tbl); n != 0 {
-			t.Errorf("table %s still has %d rows", tbl, n)
-		}
+	if left := sub.Tables(); len(left) != 0 {
+		t.Errorf("tables still populated: %v", left)
 	}
-	if err := idx.Unindex(ctx, sub, bare); err != nil {
-		t.Fatalf("second Unindex: %v", err)
+}
+
+// An origin — an artifact with no production record — is not this index's concern
+// and must leave no rows.
+func TestIndex_ManifestWithoutRecordIsSkipped(t *testing.T) {
+	idx, sub := newIndex(t, Config{})
+	m := manifestfxBlobWithForeignExt(aid("a"))
+	if _, err := idx.Index(t.Context(), sub, m); err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	if left := sub.Tables(); len(left) != 0 {
+		t.Errorf("origin wrote rows into %v", left)
+	}
+}
+
+// A stored record whose meaning does not line up with its edges is corrupt;
+// indexing must refuse rather than build half a graph.
+func TestIndex_RefusesMisalignedRecord(t *testing.T) {
+	idx, sub := newIndex(t, Config{})
+	block := Block{V: SchemaVersion, Op: "ocr", Rel: []string{"derived"}}
+	ext, err := stamp(nil, block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := domain.Manifest{
+		ArtifactID: aid("b"),
+		HandleRefs: []domain.HandleRef{domain.HandleRef(aid("a")), domain.HandleRef(aid("c"))},
+		Ext:        ext,
+	}
+	if _, err := idx.Index(t.Context(), sub, m); !errors.Is(err, ErrBadProduction) {
+		t.Fatalf("want ErrBadProduction, got %v", err)
 	}
 }
 
 // Every row the index writes must carry a non-empty value: the substrate stores
 // values NOT NULL, so a set-membership row still needs a byte.
 func TestIndex_NoEmptyValuesWritten(t *testing.T) {
-	idx, sub := setupIndex(t, Config{})
+	idx, sub := newIndex(t, Config{})
 	indexAll(t, idx, sub,
-		record(id("b"), "merge", OutcomeOK, Input{Ref: domain.HandleRef(id("a")), Rel: DefaultSupersedeRel}),
-		record(id("c"), "ocr", OutcomeFailed, Input{Ref: domain.HandleRef(id("a")), Rel: "text"}),
+		record(aid("b"), "merge", OutcomeOK, Input{Ref: domain.HandleRef(aid("a")), Rel: DefaultSupersedeRel}),
+		record(aid("c"), "ocr", OutcomeFailed, Input{Ref: domain.HandleRef(aid("a")), Rel: "text"}),
+		receiptManifest(aid("r"), aid("a"), Config{}),
 	)
-	for table, rows := range sub.tables {
-		for key, value := range rows {
-			if len(value) == 0 {
-				t.Errorf("table %s key %q holds an empty value", table, strings.ReplaceAll(key, sep, "|"))
-			}
+	sub.Each(func(table, key string, value []byte) {
+		if len(value) == 0 {
+			t.Errorf("table %s holds an empty value at key %q", table, key)
 		}
-	}
+	})
 }
+
+// --- presentation ---
+
+func TestIndex_PresentsItsOwnSchema(t *testing.T) {
+	idx, _ := newIndex(t, Config{})
+	schemas := idx.PresentedSchemas()
+	if len(schemas) != 1 || schemas[0].Key != Key {
+		t.Fatalf("presented schemas = %+v", schemas)
+	}
+	m := record(aid("b"), "ocr", OutcomeOK, Input{Ref: domain.HandleRef(aid("a")), Rel: "derived"})
+	rep, ok, err := schemas[0].Present(m.Ext)
+	if err != nil || !ok {
+		t.Fatalf("Present: ok=%v err=%v", ok, err)
+	}
+	if rep.Title == "" || len(rep.Fields) == 0 {
+		t.Errorf("empty representation: %+v", rep)
+	}
+	var _ present.Registry // the registry this feeds is assembled by the host
+}
+
+// compile-time: the index really is what the contract expects of it.
+var (
+	_ customindex.Indexer     = (*Index)(nil)
+	_ present.SchemaPresenter = (*Index)(nil)
+)
