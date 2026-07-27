@@ -119,7 +119,7 @@ type Manifest struct {
 	// HashAlgo is the content-address algorithm ("sha256"/"blake3"): the
 	// store's immutable ContentHasher, recorded once (ADR-93). The
 	// bare-hex content_hash / blob_refs and the manifest digest are
-	// re-hashable from it without StoreConfig (self-description, Principle 3).
+	// re-hashable from it without StoreConfig (self-description, Principle 4).
 	HashAlgo string
 
 	// BlobRefs is the ordered array of blob references the manifest

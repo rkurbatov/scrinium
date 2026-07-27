@@ -63,7 +63,7 @@ type Target interface {
 
 // Use installs e as one whole over a live target: it routes each
 // occupied axis part to its level through t. The result is identical to
-// wiring the parts by hand (ADR-88, Principle 12). It is for targets
+// wiring the parts by hand (ADR-88, Principle 13). It is for targets
 // whose store and scheduler already exist; the assembler, which builds
 // those in phases, applies the parts directly at each phase instead.
 func Use(ctx context.Context, t Target, e Extension) error {

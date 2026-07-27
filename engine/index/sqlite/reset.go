@@ -25,7 +25,6 @@ var _ index.Resetter = (*Index)(nil)
 // send the next Open through the migrations again for no reason.
 var resetStatements = []string{
 	`DELETE FROM proj_ext`,
-	`DELETE FROM proj_usr`,
 	`DELETE FROM manifest_blobs`,
 	`DELETE FROM manifest_handles`,
 	`DELETE FROM manifests`,

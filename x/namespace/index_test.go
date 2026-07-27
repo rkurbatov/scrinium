@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"scrinium.dev/domain"
-	"scrinium.dev/engine/customindex"
 )
 
 func TestIndex_ProjectsNSID(t *testing.T) {
@@ -23,9 +22,6 @@ func TestIndex_ProjectsNSID(t *testing.T) {
 		t.Fatalf("projections = %d, want 1", len(projs))
 	}
 	p := projs[0]
-	if p.Pocket != customindex.PocketExt {
-		t.Errorf("Pocket = %v, want PocketExt", p.Pocket)
-	}
 	if p.Field != "nsid" {
 		t.Errorf("Field = %q, want nsid", p.Field)
 	}

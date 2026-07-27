@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"io/fs"
-	"strconv"
 
 	"scrinium.dev/domain"
 )
@@ -57,37 +56,6 @@ func (i *Index) ListByExtField(ctx context.Context, extName, field, value string
 	}
 	defer rows.Close()
 	return iterateManifestRows(ctx, rows, cb)
-}
-
-// QueryByUsrField is the same over proj_usr (§9.6). It returns an empty result
-// (no error) when the global usr_indexing switch is off — proj_usr is then not
-// maintained, so a query has nothing to match (§9.12). A field is projected
-// under a single ValueKind, so exactly one value column is non-NULL per row;
-// the predicate probes all three columns with the string value (plus its
-// integer form when it parses), so text / number / hash fields are all
-// reachable from one signature.
-func (i *Index) QueryByUsrField(ctx context.Context, field, value string, cb func(domain.ArtifactID) error) error {
-	if !i.usrIndexing.Load() {
-		return nil
-	}
-	var num sql.NullInt64
-	if n, perr := strconv.ParseInt(value, 10, 64); perr == nil {
-		num = sql.NullInt64{Int64: n, Valid: true}
-	}
-	const stmt = `
-		SELECT DISTINCT m.artifact_id
-		FROM proj_usr p
-		JOIN manifests m ON m.manifest_digest = p.manifest_digest
-		WHERE p.field = ?
-		  AND (p.value_text = ? OR p.value_hash = ? OR p.value_number = ?)
-		  AND m.artifact_id IS NOT NULL
-		ORDER BY m.artifact_id`
-	rows, err := i.db.QueryContext(ctx, stmt, field, value, value, num)
-	if err != nil {
-		return classifyError(err)
-	}
-	defer rows.Close()
-	return iterateArtifactIDRows(ctx, rows, cb)
 }
 
 // iterateArtifactIDRows streams a single-column artifact_id result set through

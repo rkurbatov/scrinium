@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"scrinium.dev/engine/customindex"
@@ -27,13 +26,6 @@ const DefaultBusyTimeout = 5 * time.Second
 type Index struct {
 	db   *sql.DB
 	opts options
-
-	// usrIndexing mirrors the global usr-pocket indexing gate in memory
-	// (ADR-104 §6: the durable value is a keep=0 system-artifact cell the
-	// Store reads on open and pushes via SetUsrIndexing). Read on the hot
-	// projection/query paths; atomic so a projection-tx write and a query
-	// read do not race. Defaults to off.
-	usrIndexing atomic.Bool
 
 	// publisher is invoked from instrumented call sites to emit
 	// index.* metric events. Optional; nil disables emission. We

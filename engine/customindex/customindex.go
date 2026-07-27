@@ -159,74 +159,45 @@ type Resolver interface {
 // Key is a position in a CustomIndex's OWN ordered key space — a path for a
 // tree index — written via Substrate inside Index and scanned by the Accessor
 // family (KeyLookup/PrefixScan/RangeScan over own tables, §9.7). It is distinct
-// from a Projection: equality projection into the standard tables (proj_ext/
-// proj_usr) is expressed by RETURNING Projections from Index, not Keys.
+// from a Projection: equality projection into the standard table (proj_ext) is
+// expressed by RETURNING Projections from Index, not Keys.
 type Key string
 
-// Pocket selects which manifest pocket a projected field is read from.
-type Pocket uint8
-
-const (
-	// PocketExt — the ext pocket (always JSON); projected into proj_ext.
-	PocketExt Pocket = iota
-	// PocketUsr — the usr pocket; projected into proj_usr, gated by the
-	// in-memory usr_indexing switch (ADR-104 §6; default off).
-	PocketUsr
-)
-
-// ValueKind selects the proj_usr column a usr projection lands in. Ignored
-// for PocketExt (proj_ext stores a JSON scalar as text).
-type ValueKind uint8
-
-const (
-	// KindText — value_text (structural string).
-	KindText ValueKind = iota
-	// KindNumber — value_number (Value parsed as a base-10 integer).
-	KindNumber
-	// KindHash — value_hash; Value is the hex hash of the DECODED value,
-	// computed by the index (opaque bytes are never indexed directly).
-	KindHash
-)
-
 // Projection is one equality row an Indexer emits for the core to write into
-// the standard tables (proj_ext for PocketExt, proj_usr for PocketUsr, §9.5).
-// The index supplies Field/Value(/Kind); the core stamps the manifest digest
-// and ext_name (= Name()), so an index cannot project under another index's
-// name (Principle 8). proj_* is the core-maintained equality store; an index
-// keeps NO own tables for it. Several Projections per Index call are allowed —
-// the proj_ext PK (digest, ext_name, field) holds multiple fields per index.
+// the standard table (proj_ext, §9.6). The index supplies Field/Value; the core
+// stamps the manifest digest and ext_name (= Name()), so an index cannot
+// project under another index's name (Principle 9). proj_ext is the
+// core-maintained equality store; an index keeps NO own tables for it. Several
+// Projections per Index call are allowed — the PK (digest, ext_name, field)
+// holds multiple fields per index.
+//
+// There is no projection of the usr pocket: usr is a detachable part of the
+// content, which the system does not interpret and does not search (Principle
+// 3, ADR-77 amendment).
 type Projection struct {
-	// Pocket selects the target table (ext → proj_ext, usr → proj_usr).
-	Pocket Pocket
-
-	// Field is the projected field name within the pocket ("nsid", "path",
-	// …) — independent of the index Name (ext_name): Walk(ns) reads
+	// Field is the projected field name within the ext pocket ("nsid",
+	// "path", …) — independent of the index Name (ext_name): Walk(ns) reads
 	// ext_name="namespace", field="nsid".
 	Field string
 
-	// Value is the projected scalar: a JSON scalar as text for ext; for usr,
-	// the text / integer / hex-hash per Kind.
+	// Value is the projected scalar: a JSON scalar as text.
 	Value string
-
-	// Kind selects the proj_usr column for a PocketUsr field; ignored for
-	// PocketExt.
-	Kind ValueKind
 }
 
 // Indexer is the optional write-side capability (ADR-78) — the SINGLE mechanism
-// that populates the index for search (Principle 9): a pure function of the
+// that populates the index (Principle 11): a pure function of the
 // manifest, run by the core inside the index-write transaction on Put. Index
-// (a) RETURNS Projections the core writes into proj_ext/proj_usr — equality
-// search, core-maintained (§9.5); and/or (b) writes the index's OWN tables via
+// (a) RETURNS Projections the core writes into proj_ext — equality lookup over
+// the index's own area, core-maintained (§9.6); and/or (b) writes its OWN tables via
 // store — prefix-trees, counters (§9.7), scanned later by the Accessor family.
 // namespace projects (ext "nsid"); fspathindex writes an own path tree. Unindex is
 // symmetric on Delete/Rollback, recomputing from the manifest — the index never
-// touches foreign rows by ArtifactID (Principle 8); the core removes the
-// manifest's proj_* rows by digest. Both sides are idempotent over the manifest
+// touches foreign rows by ArtifactID (Principle 9); the core removes the
+// manifest's proj_ext rows by digest. Both sides are idempotent over the manifest
 // (Put/Delete, not conditional) so the backend may replay after crash recovery
-// (§9.10). Index sees the passport {digest, ext(+usr)}, not the content
-// (Principle 6); determinism lets rebuild reproduce an identical index
-// (Corollary 14). Writes through store happen in the same transaction.
+// (§9.10). Index sees the passport {digest, ext}, not the content
+// (Principle 3); determinism lets rebuild reproduce an identical index
+// (Corollary 15). Writes through store happen in the same transaction.
 type Indexer interface {
 	Index(ctx context.Context, store Substrate, m domain.Manifest) ([]Projection, error)
 	Unindex(ctx context.Context, store Substrate, m domain.Manifest) error

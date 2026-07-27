@@ -40,8 +40,6 @@ func resetFixture(t *testing.T, idx *Index) {
 		"sha256-1111111111", "artifact-0")
 	exec(`INSERT INTO proj_ext (manifest_digest, ext_name, field, value) VALUES (?, 'librarium', 'kind', 'origin')`,
 		"sha256-1111111111")
-	exec(`INSERT INTO proj_usr (manifest_digest, field, value_text) VALUES (?, 'title', 'a book')`,
-		"sha256-1111111111")
 	exec(`INSERT INTO ext_data (extension, table_name, key, value) VALUES ('provenance', 'edges', 'k', X'00')`)
 	exec(`INSERT INTO ext_meta (extension, schema_version, registered_at) VALUES ('provenance', 1, '2026-07-25T00:00:00Z')`)
 }
@@ -51,7 +49,7 @@ func resetFixture(t *testing.T, idx *Index) {
 // they are counters and structure, checked separately below.
 var emptiedTables = []string{
 	"blobs", "manifests", "manifest_blobs", "manifest_handles",
-	"proj_ext", "proj_usr", "ext_data", "ext_meta",
+	"proj_ext", "ext_data", "ext_meta",
 }
 
 func TestResetIndex_EmptiesOwnedTables(t *testing.T) {

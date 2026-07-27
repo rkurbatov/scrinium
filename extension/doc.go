@@ -14,7 +14,7 @@
 // host type-assert and needs no umbrella plumbing.)
 //
 // Manual per-axis wiring (storeIndex.Register, store-level wrap,
-// scheduler.Add) yields the identical result (ADR-88, Principle 12); Use
+// scheduler.Add) yields the identical result (ADR-88, Principle 13); Use
 // is the one-call convenience over the same primitives, for a live
 // target whose store and scheduler already exist. The assembler applies
 // the parts directly at their construction phases (index before store

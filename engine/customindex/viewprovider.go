@@ -12,7 +12,7 @@ import (
 // Resolver / Indexer / Accessor — and is asserted off the registered
 // CustomIndex. The projection library never sees this type: discovery
 // lives at the composition root, which alone may import both the
-// extensions and the projection (ADR-89; Principle 10 — the projection
+// extensions and the projection (ADR-89; Principle 12 — the projection
 // stays acyclic and extension-agnostic).
 type ViewProvider interface {
 	// ProvidedViews returns the view(s) this extension backs. Each names
@@ -31,7 +31,7 @@ type ViewProvider interface {
 // to its placement in the tree, so the projection never knows the view's
 // addressing scheme (a verbatim logical path for by-path, an id-sharded
 // path under a registry label for by-namespace, …). This keeps the
-// projection extension-agnostic (ADR-89, Principle 10): it materialises
+// projection extension-agnostic (ADR-89, Principle 12): it materialises
 // trees from opaque Path/CountKey functions without naming any view.
 type ProvidedView struct {
 	// Root is the RootView this extension backs, e.g. "by-path" (fspath)

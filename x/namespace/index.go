@@ -77,7 +77,7 @@ func (e *Index) Close() error { return nil }
 
 // Index projects the artifact's nsid into the core proj_ext store. It
 // reads the "nsid" key from Manifest.Ext; when present and non-empty it
-// returns a single PocketExt projection (field "nsid"), which the core
+// returns a single ext projection (field "nsid"), which the core
 // stamps with the manifest digest and ext_name="scrinium.namespace". A manifest
 // with no nsid (most artifacts, system artifacts, nil Ext) is skipped —
 // it simply belongs to no namespace. It writes nothing to its own store.
@@ -90,9 +90,8 @@ func (e *Index) Index(ctx context.Context, sub customindex.Substrate, m domain.M
 		return nil, nil // no namespace stamp — not our concern
 	}
 	return []customindex.Projection{{
-		Pocket: customindex.PocketExt,
-		Field:  nsidField,
-		Value:  string(id),
+		Field: nsidField,
+		Value: string(id),
 	}}, nil
 }
 

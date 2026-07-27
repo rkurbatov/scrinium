@@ -53,16 +53,6 @@ type CheckpointRestorer interface {
 	RestoreCheckpoint(ctx context.Context, srcPath string) error
 }
 
-// UsrIndexingSwitch is the optional capability of toggling the global
-// usr-pocket indexing gate the index holds in memory. The Store owns the
-// durable switch (a keep=0 system-artifact cell, ADR-104 §6) and pushes its
-// value here on open and on change; the index then reads the in-memory flag
-// on its hot projection/query paths. Indexes that do not project the usr
-// pocket need not implement it.
-type UsrIndexingSwitch interface {
-	SetUsrIndexing(on bool)
-}
-
 // Token is an opaque, monotonic change marker for an index that supports the
 // synchronization capability (ADR-106). It advances on every committed
 // mutation — IndexManifest and DeleteManifest alike — and never moves
