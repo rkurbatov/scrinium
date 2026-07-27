@@ -152,9 +152,13 @@ func (a *ejectorAgent) Validate(ctx context.Context) error {
 // (ADR-69) drives periodicity; the Ejector has no background goroutine.
 func (a *ejectorAgent) Run(ctx context.Context) (*domain.AgentResult, error) {
 	a.SetState(agent.StateRunning, nil)
+	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		a.SetState(agent.StateFaulted, err)
-		return &domain.AgentResult{AgentType: "ejector", StoreID: a.storeID, CompletedAt: time.Now(), Partial: true}, err
+		return &domain.AgentResult{
+			AgentType: "ejector", StoreID: a.storeID,
+			StartedAt: started, CompletedAt: time.Now(), Partial: true,
+		}, err
 	}
 	counts := a.reclaim(time.Now())
 	a.emitCleanup(counts)
@@ -166,6 +170,7 @@ func (a *ejectorAgent) Run(ctx context.Context) (*domain.AgentResult, error) {
 	return &domain.AgentResult{
 		AgentType:   "ejector",
 		StoreID:     a.storeID,
+		StartedAt:   started,
 		CompletedAt: time.Now(),
 		Stats:       map[string]int64{"evicted": total},
 	}, nil
