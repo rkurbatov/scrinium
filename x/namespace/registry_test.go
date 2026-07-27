@@ -191,3 +191,8 @@ func keys(m *memSysStore) []string {
 	}
 	return out
 }
+
+// PointerRef: these fakes never hold pointer artifacts.
+func (m *memSysStore) PointerRef(context.Context, string) (domain.ManifestDigest, bool, error) {
+	return "", false, nil
+}

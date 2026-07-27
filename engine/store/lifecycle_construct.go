@@ -189,10 +189,20 @@ func settleIndex(ctx context.Context, c *store, plan indexPlan) error {
 		return nil
 	}
 	if plan.recover {
-		// No procedure supplied: the reconciliation that follows does the
-		// same job the slow way — it reads every manifest the index does not
-		// know back into it. Completeness is then established BY the pass,
-		// not before it, so nothing is marked here.
+		// Built-in fast half: restore the newest checkpoint, if there is one
+		// and the backend can take it. The reconciliation that follows then
+		// finds almost everything already known and only reads the tail.
+		// A failure here costs speed, not correctness — the pass does the
+		// whole job by itself — so it is logged and swallowed.
+		used, err := restoreIndexFromCheckpoint(ctx, c)
+		if err != nil {
+			c.componentLogger("store").LogAttrs(ctx, slog.LevelWarn,
+				"checkpoint restore skipped", slog.String("reason", err.Error()))
+		} else if used {
+			c.componentLogger("store").LogAttrs(ctx, slog.LevelInfo,
+				"index restored from checkpoint")
+		}
+		// Completeness is established by the pass that follows, not here.
 		return nil
 	}
 	c.markIndexComplete()

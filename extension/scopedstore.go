@@ -132,6 +132,16 @@ func (s *ScopedSystemStore) Walk(ctx context.Context, prefix string, cb func(nam
 }
 
 // scopeName prefixes a non-empty local name with the extension scope.
+// PointerRef scopes the name and forwards. Present for interface parity: an
+// extension's own pointer artifacts resolve the same way the engine's do.
+func (s *ScopedSystemStore) PointerRef(ctx context.Context, name string) (domain.ManifestDigest, bool, error) {
+	scoped, err := s.scopeName(name)
+	if err != nil {
+		return "", false, err
+	}
+	return s.sys.PointerRef(ctx, scoped)
+}
+
 func (s *ScopedSystemStore) scopeName(local string) (string, error) {
 	if local == "" {
 		return "", fmt.Errorf("extension %q: empty artifact name", s.name)

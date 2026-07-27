@@ -24,9 +24,11 @@ import (
 	"os"
 	"sync"
 
+	"scrinium.dev/config"
 	"scrinium.dev/domain"
 	"scrinium.dev/engine/artifact"
 	"scrinium.dev/engine/driver"
+	"scrinium.dev/engine/layout"
 	"scrinium.dev/engine/pipeline"
 	"scrinium.dev/errs"
 )
@@ -204,6 +206,41 @@ func (e *IO) OpenHandle(ctx context.Context, m domain.Manifest) (domain.ReadHand
 			drv:      e.drv,
 			runner:   e.runner(),
 			blobPath: addr.Path,
+			ctx:      ctx,
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("cas: unknown BlobStorage %q", m.LayoutHeader.BlobStorage)
+	}
+}
+
+// OpenHandleWithoutIndex is OpenHandle for the one caller that cannot ask the
+// index anything: index recovery (ADR-118). Restoring a checkpoint means
+// reading a blob whose address would normally come from the index — the very
+// thing being rebuilt — so the address is DERIVED from the layout instead.
+//
+// That derivation is exactly why a checkpoint is never packed: a packed
+// member is addressed through the placement map, which lives in the index,
+// and the loop would close again.
+//
+// Not a general fallback: the ordinary read path must keep following where a
+// blob was actually written rather than where the current topology would put
+// it. This entry point is for bootstrap only.
+func (e *IO) OpenHandleWithoutIndex(ctx context.Context, m domain.Manifest, topology config.PathTopology) (domain.ReadHandle, error) {
+	switch m.LayoutHeader.BlobStorage {
+	case domain.LayoutInline:
+		return NewInlineHandle(m), nil
+
+	case domain.LayoutTarget:
+		path, err := layout.BlobPath(topology, domain.BlobTypeRegular, string(m.PrimaryBlobRef()))
+		if err != nil {
+			return nil, fmt.Errorf("cas: derive blob path: %w", err)
+		}
+		return &targetReadHandle{
+			manifest: m,
+			drv:      e.drv,
+			runner:   e.runner(),
+			blobPath: path,
 			ctx:      ctx,
 		}, nil
 
