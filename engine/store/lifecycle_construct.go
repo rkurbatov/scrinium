@@ -7,7 +7,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"strings"
 	"time"
@@ -89,26 +88,7 @@ func buildStore(
 // timestamp cursor (ADR-104 §6: advisory state, keep=0 cell, read directly).
 const orphanScanCursorName = "store.agent.orphanscan.last"
 
-// usrIndexingCellName is the system-artifact name of the usr-pocket indexing
-// gate (ADR-104 §6: keep=0 cell; read on open into the index's in-memory flag).
-const usrIndexingCellName = "store.usr_indexing"
-
 func unlockBootstrap(ctx context.Context, c *store, pub event.Publisher) error {
-	// usr-pocket indexing gate (ADR-104 §6): the durable switch is a keep=0
-	// system-artifact cell, read here on open and pushed into the index's
-	// in-memory flag. Role-2 (discardable): any read failure — including an
-	// absent cell on a fresh store — leaves the gate at its safe default (off).
-	// The index then reads the flag on its hot paths; no re-read happens here.
-	if sw, ok := c.index.(index.UsrIndexingSwitch); ok {
-		on := false
-		if rh, gerr := c.system.Get(ctx, usrIndexingCellName); gerr == nil {
-			b, _ := io.ReadAll(rh)
-			_ = rh.Close()
-			v := strings.TrimSpace(string(b))
-			on = v == "on" || v == "true" || v == "1"
-		}
-		sw.SetUsrIndexing(on)
-	}
 	report, err := orphanscan.RecoverOrphans(ctx, c.drv, c.index)
 	if err != nil {
 		return fmt.Errorf("orphan scan: %w", err)

@@ -113,11 +113,6 @@ type StoreIndex interface {
 	// Handle-less rows are excluded (artifact_id IS NULL). Equality only (v1).
 	ListByExtField(ctx context.Context, extName, field, value string, cb func(domain.Manifest) error) error
 
-	// QueryByUsrField is the same over proj_usr (user-pocket fields). It
-	// returns an empty result (no error) unless the global usr_indexing
-	// switch is on — when off, proj_usr is not maintained.
-	QueryByUsrField(ctx context.Context, field, value string, cb func(domain.ArtifactID) error) error
-
 	// ListOrphanBlobs iterates over blobs with ref_count = 0. Used
 	// by the GC Agent.
 	ListOrphanBlobs(ctx context.Context, cb func(blobRef string) error) error

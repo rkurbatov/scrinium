@@ -23,7 +23,7 @@ type Config struct {
 	// capability (ADR-98) and forwarded here verbatim. The projection
 	// unions them with its intrinsic views and materialises each from the
 	// supplied Path/CountKey without knowing the view's concept — it
-	// names no extension view (ADR-89, Principle 10). Empty ⇒ only the
+	// names no extension view (ADR-89, Principle 12). Empty ⇒ only the
 	// intrinsic views exist.
 	ProvidedViews []ProvidedView
 
@@ -78,7 +78,7 @@ type Config struct {
 // Config.ProvidedViews; Build forwards them to the read-side View. The
 // type carries the view's whole layout as opaque functions so the
 // projection materialises the tree without knowing its addressing
-// scheme — it never names the view (ADR-89, Principle 10). It is a
+// scheme — it never names the view (ADR-89, Principle 12). It is a
 // distinct type from the engine's so the projection takes no dependency
 // on the extension/engine layer.
 type ProvidedView struct {

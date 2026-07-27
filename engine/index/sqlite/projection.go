@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
 
 	"scrinium.dev/domain"
 	"scrinium.dev/engine/customindex"
@@ -30,18 +29,16 @@ func (i *Index) snapshotIndexers() []customindex.CustomIndex {
 
 // applyIndexers runs every registered Indexer over m in the index-write
 // transaction (§9.2.1): each index writes its OWN tables through its Substrate
-// and RETURNS Projections the core writes into proj_ext / proj_usr. The core
-// stamps digest and ext_name (= Name()) — an index cannot project under
-// another's name (Principle 8). Idempotent (INSERT OR REPLACE) so a crash-replay
-// of IndexManifest overwrites identically (§9.10). usr projections are dropped
-// unless the global usr_indexing switch is on (read once per call, cached).
+// and RETURNS Projections the core writes into proj_ext. The core stamps digest
+// and ext_name (= Name()) — an index cannot project under another's name
+// (Principle 9). Idempotent (INSERT OR REPLACE) so a crash-replay of
+// IndexManifest overwrites identically (§9.10).
 func (i *Index) applyIndexers(ctx context.Context, tx *sql.Tx, m domain.Manifest) error {
 	idxs := i.snapshotIndexers()
 	if len(idxs) == 0 {
 		return nil
 	}
 	digest := string(m.Digest)
-	usrOn := -1 // tri-state: -1 unknown, 0 off, 1 on
 	for _, ci := range idxs {
 		name := ci.Name()
 		sub := newSqliteSubstrate(name)
@@ -51,27 +48,8 @@ func (i *Index) applyIndexers(ctx context.Context, tx *sql.Tx, m domain.Manifest
 			return fmt.Errorf("indexer %q index: %w", name, err)
 		}
 		for _, p := range projs {
-			switch p.Pocket {
-			case customindex.PocketExt:
-				if err := upsertProjExt(ctx, tx, digest, name, p.Field, p.Value); err != nil {
-					return fmt.Errorf("indexer %q ext field %q: %w", name, p.Field, err)
-				}
-			case customindex.PocketUsr:
-				if usrOn == -1 {
-					if i.usrIndexing.Load() {
-						usrOn = 1
-					} else {
-						usrOn = 0
-					}
-				}
-				if usrOn == 0 {
-					continue // global usr_indexing off — usr projection disabled
-				}
-				if err := upsertProjUsr(ctx, tx, digest, p.Field, p.Kind, p.Value); err != nil {
-					return fmt.Errorf("indexer %q usr field %q: %w", name, p.Field, err)
-				}
-			default:
-				return fmt.Errorf("indexer %q field %q: unknown pocket %d", name, p.Field, p.Pocket)
+			if err := upsertProjExt(ctx, tx, digest, name, p.Field, p.Value); err != nil {
+				return fmt.Errorf("indexer %q ext field %q: %w", name, p.Field, err)
 			}
 		}
 	}
@@ -106,14 +84,11 @@ func (i *Index) applyUnindexers(ctx context.Context, tx *sql.Tx, m domain.Manife
 // delete transaction. The core owns proj_*, so it removes them by digest — the
 // symmetric inverse of having written them, and robust to an index toggled off
 // since the write (no orphan rows). An index's OWN tables (Substrate, §9.7) are
-// cleaned by Unindex (applyUnindexers, wired in deleteManifestTx). proj_* delete
+// cleaned by Unindex (applyUnindexers, wired in deleteManifestTx). proj_ext delete
 // needs only the digest, so it is handled here.
 func deleteProjections(ctx context.Context, tx *sql.Tx, digest string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM proj_ext WHERE manifest_digest = ?`, digest); err != nil {
 		return fmt.Errorf("delete proj_ext: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM proj_usr WHERE manifest_digest = ?`, digest); err != nil {
-		return fmt.Errorf("delete proj_usr: %w", err)
 	}
 	return nil
 }
@@ -125,43 +100,4 @@ func upsertProjExt(ctx context.Context, tx *sql.Tx, digest, extName, field, valu
 		`INSERT OR REPLACE INTO proj_ext (manifest_digest, ext_name, field, value) VALUES (?, ?, ?, ?)`,
 		digest, extName, field, value)
 	return err
-}
-
-// upsertProjUsr writes one proj_usr row, placing Value in the column its Kind
-// selects. KindNumber parses Value as a base-10 int64 (a non-integer is a
-// projection error — the index declared the field numeric). KindHash stores the
-// index-supplied hex hash verbatim (the index computed it from the decoded
-// value; opaque bytes never reach the index).
-func upsertProjUsr(ctx context.Context, tx *sql.Tx, digest, field string, kind customindex.ValueKind, value string) error {
-	var (
-		text sql.NullString
-		num  sql.NullInt64
-		hash sql.NullString
-	)
-	switch kind {
-	case customindex.KindText:
-		text = sql.NullString{String: value, Valid: true}
-	case customindex.KindNumber:
-		n, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return fmt.Errorf("value %q not an integer: %w", value, err)
-		}
-		num = sql.NullInt64{Int64: n, Valid: true}
-	case customindex.KindHash:
-		hash = sql.NullString{String: value, Valid: true}
-	default:
-		return fmt.Errorf("unknown value kind %d", kind)
-	}
-	_, err := tx.ExecContext(ctx,
-		`INSERT OR REPLACE INTO proj_usr (manifest_digest, field, value_text, value_number, value_hash) VALUES (?, ?, ?, ?, ?)`,
-		digest, field, text, num, hash)
-	return err
-}
-
-// SetUsrIndexing sets the in-memory usr-pocket indexing gate
-// (index.UsrIndexingSwitch). The Store calls it on open from the durable cell
-// and on any change; the hot projection/query paths read this in-memory flag
-// (ADR-104 §6).
-func (i *Index) SetUsrIndexing(on bool) {
-	i.usrIndexing.Store(on)
 }

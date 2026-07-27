@@ -47,7 +47,6 @@ func Run(t *testing.T, f Factory) {
 	t.Run(f.Name+"/IterateManifests", func(t *testing.T) { runIterateManifests(t, f) })
 	t.Run(f.Name+"/QueryByExtField", func(t *testing.T) { runQueryByExtField(t, f) })
 	t.Run(f.Name+"/ListByExtField", func(t *testing.T) { runListByExtField(t, f) })
-	t.Run(f.Name+"/QueryByUsrField", func(t *testing.T) { runQueryByUsrField(t, f) })
 	t.Run(f.Name+"/GetBySession", func(t *testing.T) { runGetBySession(t, f) })
 	t.Run(f.Name+"/ListOrphanBlobs", func(t *testing.T) { runListOrphanBlobs(t, f) })
 	t.Run(f.Name+"/DeleteOrphanBlob", func(t *testing.T) { runDeleteOrphanBlob(t, f) })

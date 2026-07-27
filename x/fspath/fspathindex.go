@@ -47,7 +47,7 @@ const schemaVersion = 1
 // event path: the core runs Index/Unindex inside the index-write and
 // delete transactions (09 §9.2). fspathindex keeps an OWN path tree
 // (queried through the Accessor) and projects nothing into the standard
-// proj_ext/proj_usr tables — "namespace projects nsid; fspathindex
+// proj_ext table — "namespace projects nsid; fspathindex
 // writes an own path tree" (09 §9.2).
 type CustomIndex struct {
 	// sub is captured during Setup and used by the read-side
