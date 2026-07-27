@@ -93,9 +93,17 @@ type ConfigUpdatedPayload struct {
 // scan never refuses to open a Store — operators read the count
 // here and dig into engine logs for details.
 type OrphanScanCompletedPayload struct {
-	StagingRemoved   int
-	BlobsRemoved     int
+	StagingRemoved int
+	// BlobsRemoved is zero for the open-time pass, which never deletes a
+	// blob (ADR-118); the field carries the count of the media
+	// reconciliation, which runs as maintenance.
+	BlobsRemoved int
+	// ManifestsRemoved counts fragments of interrupted writes — files whose
+	// bytes do not hash to their own name. A whole manifest the index did
+	// not know is never removed.
 	ManifestsRemoved int
+	// ManifestsIndexed counts whole manifests read back into the index.
+	ManifestsIndexed int
 	NonFatalErrors   int
 	Duration         time.Duration
 }

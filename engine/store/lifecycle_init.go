@@ -158,6 +158,15 @@ func InitStore(ctx context.Context, drv driver.Driver, opts ...StoreOption) (Sto
 			errs.ErrPassphraseRequired, cfg.ManifestCrypto)
 	}
 
+	// --- Refuse a crypto mode the index cannot honour ---
+	//
+	// Paranoid promises that nothing about the store is readable on
+	// disk; an index persisting in the clear holds the same fields and
+	// defeats the mode (ADR-56). Checked here, before any payload I/O.
+	if err := guardIndexAtRest(cfg.ManifestCrypto, idx); err != nil {
+		return nil, nil, fmt.Errorf("store.InitStore: %w", err)
+	}
+
 	// --- Generate identity and DEK ---
 	//
 	// DEK is generated for every Store regardless of crypto
@@ -216,6 +225,9 @@ func InitStore(ctx context.Context, drv driver.Driver, opts ...StoreOption) (Sto
 		return nil, nil, wrap("", err)
 	}
 	s.crypto.PromoteResolverIfDefault()
+	// A just-initialised Location holds nothing, so the index knows the whole
+	// (empty) manifest set: completeness is true by vacuous truth (ADR-118).
+	s.markIndexComplete()
 	if err := unlockBootstrap(ctx, s, o.publisher); err != nil {
 		aead.Wipe(dek)
 		return nil, nil, wrap("", err)

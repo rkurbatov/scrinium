@@ -186,3 +186,13 @@ func (e *IO) VerifyBlob(ctx context.Context, m domain.Manifest) error {
 	}
 	return nil
 }
+
+// LoadByDigest is loadManifestByDigest for callers outside the read path: the
+// open-time reconciliation reads a manifest the index does not know, and must
+// do it exactly the way a normal read does — verify the bytes against the
+// name, then decode. Returns errs.ErrCorruptedManifest when the file does not
+// hash to its own name, which is the single signal on which the caller is
+// allowed to delete the file.
+func (e *IO) LoadByDigest(ctx context.Context, digest domain.ManifestDigest, keys domain.KeyProvider, hashAlgo string) (domain.Manifest, error) {
+	return e.loadManifestByDigest(ctx, digest, keys, hashAlgo)
+}

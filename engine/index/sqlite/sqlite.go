@@ -27,6 +27,10 @@ type Index struct {
 	db   *sql.DB
 	opts options
 
+	// path is the DSN target as given to NewStore; ":memory:" marks an
+	// ephemeral index. Kept for AtRest reporting (index.AtRestReporter).
+	path string
+
 	// publisher is invoked from instrumented call sites to emit
 	// index.* metric events. Optional; nil disables emission. We
 	// also keep a small mutex around publication because some
@@ -195,6 +199,7 @@ func newStoreInternal(ctx context.Context, path string, o options) (*Index, erro
 	return &Index{
 		db:           db,
 		opts:         o,
+		path:         path,
 		ciByName:     make(map[string]customindex.CustomIndex),
 		ciByKind:     make(map[customindex.EventKind][]customindex.CustomIndex),
 		ciSubstrates: make(map[string]*sqliteSubstrate),
@@ -298,4 +303,17 @@ func (i *Index) publish(typ string, payload any) {
 	// event.Event is the concrete shape. We import it lazily via
 	// store.Publisher so the import lives at the use site only.
 	pub.Publish(eventOf(typ, payload))
+}
+
+// AtRest reports how this index survives a restart (index.AtRestReporter).
+// A ":memory:" index is ephemeral — nothing reaches the disk, and the
+// content is rebuilt from manifests on open. Any other path is a readable
+// SQLite file: plaintext. This backend has no encrypted form yet, so it
+// never reports AtRestEncrypted; a Paranoid Store therefore accepts it only
+// in the ":memory:" form (ADR-56).
+func (i *Index) AtRest() index.AtRest {
+	if i.path == ":memory:" {
+		return index.AtRestEphemeral
+	}
+	return index.AtRestPlaintext
 }

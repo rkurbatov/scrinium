@@ -35,3 +35,10 @@ var ErrInvalidTombstoneGracePeriod = errors.New("scrinium: invalid tombstone gra
 // ErrInvalidKDFParams — KDFParams fail the minimum-validity check:
 // Time < 1, Memory < 19456 KiB, Threads < 1.
 var ErrInvalidKDFParams = errors.New("scrinium: invalid KDF params")
+
+// ErrUnsupportedCombination — the requested combination of components
+// cannot honour a promise the config makes (ADR-56): ManifestCrypto
+// Paranoid with an index that persists readable on disk, which would
+// leave the structure of an otherwise encrypted store in the clear.
+// Returned by InitStore and OpenStore, before any payload I/O.
+var ErrUnsupportedCombination = errors.New("scrinium: unsupported component combination")
