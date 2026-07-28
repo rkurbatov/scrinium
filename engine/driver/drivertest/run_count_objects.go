@@ -21,7 +21,7 @@ func runCountObjects(t *testing.T, f Factory) {
 	// A missing prefix counts as zero, not an error.
 	t.Run("MissingPrefixIsZero", func(t *testing.T) {
 		d := f.New(t)
-		n, err := d.CountObjects(t.Context(), "nonexistent")
+		n, err := d.CountObjects(t.Context(), "0e0e0e0e")
 		if err != nil {
 			t.Fatalf("missing prefix should not error, got %v", err)
 		}

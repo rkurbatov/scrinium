@@ -113,7 +113,12 @@ func EncryptedBlobWithHash(id, blobRef string, contentHash domain.ContentHash, o
 // hash registry will refuse to parse, which is the desired
 // failure for a test feeding malformed input.
 func SyntheticHash(fillChar byte) domain.ContentHash {
-	return domain.ContentHash(strings.Repeat(string(fillChar), 64))
+	// A content hash is bare hex (ADR-93), and the index stores it as raw
+	// bytes — so a fixture cannot repeat an arbitrary character. The fill
+	// char picks the byte instead: 'a' -> "6161...", 'x' -> "7878...".
+	// Distinct chars still give distinct hashes, which is all a fixture
+	// needs.
+	return domain.ContentHash(strings.Repeat(hex.EncodeToString([]byte{fillChar}), 32))
 }
 
 // PhysAddr is a Location-workspace address at path.

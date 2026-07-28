@@ -177,3 +177,29 @@ type Resetter interface {
 	// version — this resets content, not structure.
 	ResetIndex(ctx context.Context, opts ResetOptions) error
 }
+
+// AtRest describes how an index keeps its data when the process is not
+// running — the property a Paranoid Store must check before trusting an
+// index with metadata it encrypts on disk (ADR-56).
+type AtRest uint8
+
+const (
+	// AtRestPlaintext — the index persists readable on disk. Safe default
+	// for an index that does not report: an unknown backend is assumed
+	// plaintext, so the guard refuses rather than permits.
+	AtRestPlaintext AtRest = iota
+	// AtRestEncrypted — the index persists encrypted under the store key.
+	AtRestEncrypted
+	// AtRestEphemeral — the index does not persist at all; it is rebuilt
+	// from manifests on open.
+	AtRestEphemeral
+)
+
+// AtRestReporter is the optional capability of declaring how the index
+// survives a restart. A Store in a crypto mode that forbids a readable
+// index (Paranoid, ADR-56) queries it at Init and Open and refuses the
+// combination when the answer is AtRestPlaintext. An index that does not
+// implement the capability is treated as plaintext.
+type AtRestReporter interface {
+	AtRest() AtRest
+}

@@ -171,7 +171,7 @@ func TestGetByArtifact_NotFound(t *testing.T) {
 	v, _ := vw.New(context.Background(), src)
 	defer v.Close()
 
-	_, err := v.GetIn(vw.RootByArtifact, "nonexistent")
+	_, err := v.GetIn(vw.RootByArtifact, "0e0e0e0e")
 	if !errors.Is(err, errs.ErrPathNotFound) {
 		t.Errorf("expected ErrPathNotFound, got %v", err)
 	}

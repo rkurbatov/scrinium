@@ -57,6 +57,17 @@ func (s *store) Unlock(ctx context.Context) error {
 		// success). Failure wipes the just-unwrapped DEK and reverts to
 		// Locked — holding the key in memory for a non-operational Store
 		// adds risk without benefit.
+		// The index question is settled here rather than at OpenStore for a
+		// Locked store: probing is keyless, but recovery needs the DEK that
+		// only now exists (ADR-118).
+		if err := settleIndex(ctx, s,
+			planIndexOpen(ctx, s.snapshotConfig().ManifestCrypto, s.index, s.drv, s.allowRecovery)); err != nil {
+			s.crypto.WipeDEK()
+			s.stateMu.Lock()
+			s.state = domain.StateLocked
+			s.stateMu.Unlock()
+			return fmt.Errorf("store.Unlock: %w", err)
+		}
 		if err := unlockBootstrap(ctx, s, s.pub); err != nil {
 			s.crypto.WipeDEK()
 			s.stateMu.Lock()

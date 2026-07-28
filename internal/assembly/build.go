@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
+
 	decl "scrinium.dev/config/declarative"
 
 	"scrinium.dev/domain"
@@ -154,6 +157,19 @@ func (bs *buildState) assemble(projFacade *projection.Projection) Assembly {
 				errs = append(errs, err)
 			}
 		}
+		// A parting checkpoint of the index (ADR-118). It makes the next
+		// open a restore plus a tail instead of a walk over every manifest,
+		// and for a store whose index is ephemeral (Paranoid, ADR-119) that
+		// is the difference between opening in a moment and re-reading the
+		// whole corpus with the key.
+		//
+		// Deliberately best-effort and deliberately silent about failure:
+		// the recovery procedure is required to work with a checkpoint of
+		// any age and with none at all, so a checkpoint that did not happen
+		// costs time and nothing else. It runs after the scheduler has
+		// stopped (no agent is writing) and before the store closes (the key
+		// is still there).
+		bs.finalCheckpoint()
 		if projFacade != nil {
 			if err := projFacade.Close(); err != nil {
 				errs = append(errs, err)
@@ -199,3 +215,26 @@ func (bs *buildState) assemble(projFacade *projection.Projection) Assembly {
 		presenters:   bs.presenters,
 	}
 }
+
+// finalCheckpoint takes one checkpoint on the way out, if the deployment has
+// the checkpoint agent available at all. Errors are logged, never returned:
+// see the call site for why a missing checkpoint is not a failure.
+func (bs *buildState) finalCheckpoint() {
+	ctx, cancel := context.WithTimeout(context.Background(), finalCheckpointBudget)
+	defer cancel()
+
+	ag, err := agent.Build("checkpoint", bs.st, nil, bs.agentDeps)
+	if err != nil {
+		// The agent is not linked into this build; nothing to do.
+		return
+	}
+	if _, err := bs.st.RunMaintenance(ctx, ag); err != nil && bs.agentDeps.Logger != nil {
+		bs.agentDeps.Logger.LogAttrs(ctx, slog.LevelInfo,
+			"final checkpoint skipped", slog.String("reason", err.Error()))
+	}
+}
+
+// finalCheckpointBudget bounds the parting checkpoint so a shutdown cannot
+// hang on a slow or unreachable backend. Exceeding it is the same as not
+// having a checkpoint: the next open pays with a full pass.
+const finalCheckpointBudget = 30 * time.Second

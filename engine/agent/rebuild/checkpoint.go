@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 
 	"scrinium.dev/domain"
-	"scrinium.dev/engine/agent/internal/checkpointfmt"
 	"scrinium.dev/engine/index"
+	"scrinium.dev/engine/internal/checkpointfmt"
 )
 
 // tryCheckpointFastPath restores the newest checkpoint into the index and

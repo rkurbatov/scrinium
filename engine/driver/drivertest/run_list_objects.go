@@ -71,7 +71,7 @@ func runListObjects(t *testing.T, f Factory) {
 	// A missing prefix is an empty walk, not an error.
 	t.Run("MissingPrefixIsEmpty", func(t *testing.T) {
 		d := f.New(t)
-		err := d.ListObjectsWithModTime(t.Context(), "nonexistent", time.Time{}, func(m driver.ObjectMeta) error {
+		err := d.ListObjectsWithModTime(t.Context(), "0e0e0e0e", time.Time{}, func(m driver.ObjectMeta) error {
 			t.Errorf("callback should not be invoked, got %v", m)
 			return nil
 		})

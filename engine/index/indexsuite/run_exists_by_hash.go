@@ -20,7 +20,7 @@ func runExistsByHash(t *testing.T, f Factory) {
 		ctx := t.Context()
 		idx := f.New(t)
 		hash := manifestfx.SyntheticHash('a')
-		m := manifestfx.BlobWithHash("art-1", "blob-1", hash, 1024)
+		m := manifestfx.BlobWithHash("art-1", "b10b0001", hash, 1024)
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
@@ -37,7 +37,7 @@ func runExistsByHash(t *testing.T, f Factory) {
 	t.Run("Miss", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		status, err := idx.ExistsByHash(ctx, "sha256-deadbeef", 1024, "")
+		status, err := idx.ExistsByHash(ctx, "deadbeef", 1024, "")
 		if err != nil {
 			t.Fatalf("ExistsByHash: %v", err)
 		}
@@ -54,7 +54,7 @@ func runExistsByHash(t *testing.T, f Factory) {
 		// "ExistsByHash ignores size" behaviour).
 		idx := f.New(t)
 		hash := manifestfx.SyntheticHash('x')
-		if err := idx.IndexManifest(ctx, manifestfx.BlobWithHash("art-1k", "blob-1k", hash, 1024), manifestfx.PhysAddr("p1")); err != nil {
+		if err := idx.IndexManifest(ctx, manifestfx.BlobWithHash("art-1k", "b10b001c", hash, 1024), manifestfx.PhysAddr("p1")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -73,11 +73,11 @@ func runExistsByHash(t *testing.T, f Factory) {
 		hash := manifestfx.SyntheticHash('c')
 
 		// A Plain chunk: empty crypto-identity.
-		if err := idx.IndexManifest(ctx, manifestfx.BlobWithHash("art-plain", "blob-plain", hash, 2048), manifestfx.PhysAddr("p-plain")); err != nil {
+		if err := idx.IndexManifest(ctx, manifestfx.BlobWithHash("art-plain", "b10b71a0", hash, 2048), manifestfx.PhysAddr("p-plain")); err != nil {
 			t.Fatal(err)
 		}
 		// An encrypted chunk of the same plaintext under k1.
-		if err := idx.IndexManifest(ctx, manifestfx.EncryptedBlobWithHash("art-enc", "blob-enc", hash, 2048, "aes-gcm", "k1"), manifestfx.PhysAddr("p-enc")); err != nil {
+		if err := idx.IndexManifest(ctx, manifestfx.EncryptedBlobWithHash("art-enc", "b10b0ec0", hash, 2048, "aes-gcm", "k1"), manifestfx.PhysAddr("p-enc")); err != nil {
 			t.Fatal(err)
 		}
 

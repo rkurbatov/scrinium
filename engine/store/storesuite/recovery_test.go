@@ -45,6 +45,9 @@ type recoveryFixture struct {
 	drv driver.Driver
 	idx index.StoreIndex
 	rec *eventfx.Recorder
+	// mustSurvive are paths the open-time pass is forbidden to delete:
+	// files unknown to the index but not provably garbage (ADR-118).
+	mustSurvive []string
 }
 
 func newRecoveryFixture(t *testing.T) *recoveryFixture {
@@ -153,12 +156,18 @@ func TestRecovery_SweepsOrphansAtInit(t *testing.T) {
 		checkDuration bool
 	}{
 		{"fresh store, nothing staged", func(t *testing.T, f *recoveryFixture) []string { return nil }, want{0, 0, 0}, false},
-		{"orphan blob", func(t *testing.T, f *recoveryFixture) []string {
+		// A blob the index does not know is NOT touched at open (ADR-118):
+		// "the index has no row" means the index does not know, not that the
+		// bytes are garbage. Reclaiming blobs is the GC agent's business.
+		{"unknown blob survives", func(t *testing.T, f *recoveryFixture) []string {
 			p := storekit.BlobPathForRef(t, fakeRef('a'))
 			f.stageFile(t, p, "orphan blob content")
-			return []string{p}
-		}, want{1, 0, 0}, false},
-		{"orphan manifest", func(t *testing.T, f *recoveryFixture) []string {
+			f.mustSurvive = append(f.mustSurvive, p)
+			return nil
+		}, want{0, 0, 0}, false},
+		// A manifest file whose bytes do not hash to its own name is a
+		// fragment of an interrupted write — the one thing the pass deletes.
+		{"fragment manifest", func(t *testing.T, f *recoveryFixture) []string {
 			p := manifestPathForID(t, domain.ManifestDigest(fakeRef('m')))
 			f.stageFile(t, p, "{}")
 			return []string{p}
@@ -171,12 +180,13 @@ func TestRecovery_SweepsOrphansAtInit(t *testing.T) {
 		{"one of each", func(t *testing.T, f *recoveryFixture) []string {
 			b := storekit.BlobPathForRef(t, fakeRef('1'))
 			f.stageFile(t, b, "x")
+			f.mustSurvive = append(f.mustSurvive, b)
 			m := manifestPathForID(t, domain.ManifestDigest(fakeRef('2')))
 			f.stageFile(t, m, "{}")
 			st := ".staging/leftover-3"
 			f.stageFile(t, st, "x")
-			return []string{b, m, st}
-		}, want{1, 1, 1}, true},
+			return []string{m, st}
+		}, want{0, 1, 1}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -199,7 +209,12 @@ func TestRecovery_SweepsOrphansAtInit(t *testing.T) {
 			}
 			for _, p := range staged {
 				if f.fileExists(t, p) {
-					t.Errorf("orphan %q must be removed by recovery", p)
+					t.Errorf("%q must be removed by the open-time pass", p)
+				}
+			}
+			for _, p := range f.mustSurvive {
+				if !f.fileExists(t, p) {
+					t.Errorf("%q must survive: the pass never deletes on the index's word alone", p)
 				}
 			}
 			if tc.checkDuration && r.Duration <= 0 {
@@ -209,26 +224,32 @@ func TestRecovery_SweepsOrphansAtInit(t *testing.T) {
 	}
 }
 
-// TestRecovery_LeavesUnparseableRef: a file at a Sharded-shaped path whose
-// name is not "<algo>-<hex>" is left alone (we don't know what it is) and a
-// non-fatal error is recorded — the scan does not crash or remove it.
-func TestRecovery_LeavesUnparseableRef(t *testing.T) {
+// TestRecovery_LeavesUnparseableName: a file under manifests/ whose name is
+// not "<algo>-<hex>" is of unknown nature — not ours to judge, so not ours to
+// delete. It stays and a non-fatal error is recorded. (A junk file under
+// blobs/ is not even looked at: the pass does not walk blobs.)
+func TestRecovery_LeavesUnparseableName(t *testing.T) {
 	f := newRecoveryFixture(t)
 
-	junkPath := "blobs/aa/bb/not-a-blob-ref-just-some-text"
-	f.stageFile(t, junkPath, "mystery file")
+	junkManifest := "manifests/aa/bb/not-a-digest-just-some-text"
+	f.stageFile(t, junkManifest, "mystery file")
+	junkBlob := "blobs/aa/bb/not-a-blob-ref-just-some-text"
+	f.stageFile(t, junkBlob, "another mystery")
 
 	_ = f.initStore(t)
 
-	if !f.fileExists(t, junkPath) {
-		t.Errorf("unparseable file %q must be left alone (recovery only removes recognisable refs)", junkPath)
+	if !f.fileExists(t, junkManifest) {
+		t.Errorf("unparseable name %q must be left alone", junkManifest)
+	}
+	if !f.fileExists(t, junkBlob) {
+		t.Errorf("file under blobs/ %q must be left alone — the pass does not walk blobs", junkBlob)
 	}
 	r := lastReport(t, f.rec)
-	if r.BlobsRemoved != 0 {
-		t.Errorf("BlobsRemoved: got %d, want 0 (the file is not a recognisable ref)", r.BlobsRemoved)
+	if r.ManifestsRemoved != 0 || r.BlobsRemoved != 0 {
+		t.Errorf("removed counts: got %+v, want zeroes", r)
 	}
 	if r.NonFatalErrors == 0 {
-		t.Errorf("NonFatalErrors: got 0, want >=1 (parse failure was expected)")
+		t.Errorf("NonFatalErrors: got 0, want >=1 (the unparseable name was expected to be reported)")
 	}
 }
 
@@ -279,10 +300,11 @@ func TestRecovery_DoesNotTouchLiveArtifact(t *testing.T) {
 	}
 }
 
-// TestRecovery_OpenStore_RemovesOrphanInjectedAfterInit: orphans planted
-// between sessions (a crash after Rename/Put but before IndexManifest) are
-// swept on the next OpenStore, while the live artifact is untouched.
-func TestRecovery_OpenStore_RemovesOrphanInjectedAfterInit(t *testing.T) {
+// TestRecovery_OpenStore_HandlesDebrisInjectedAfterInit: debris planted
+// between sessions is dealt with on the next OpenStore, each kind on its own
+// terms (ADR-118) — the fragment goes, the blob stays, the live artifact is
+// untouched.
+func TestRecovery_OpenStore_HandlesDebrisInjectedAfterInit(t *testing.T) {
 	f := newRecoveryFixture(t)
 	s := f.initStore(t)
 
@@ -301,11 +323,11 @@ func TestRecovery_OpenStore_RemovesOrphanInjectedAfterInit(t *testing.T) {
 	f.rec.Clear()
 	s2 := f.openStore(t)
 
-	if f.fileExists(t, orphanBlob) {
-		t.Errorf("orphan blob %q must be removed", orphanBlob)
+	if !f.fileExists(t, orphanBlob) {
+		t.Errorf("blob %q must survive: an index without a row for it has said nothing about the bytes", orphanBlob)
 	}
 	if f.fileExists(t, orphanManifest) {
-		t.Errorf("orphan manifest %q must be removed", orphanManifest)
+		t.Errorf("fragment %q must be removed: its bytes do not hash to its name", orphanManifest)
 	}
 	livePath := manifestPathForID(t, liveDigest)
 	if !f.fileExists(t, livePath) {
@@ -313,8 +335,8 @@ func TestRecovery_OpenStore_RemovesOrphanInjectedAfterInit(t *testing.T) {
 	}
 
 	r := lastReport(t, f.rec)
-	if r.BlobsRemoved != 1 {
-		t.Errorf("BlobsRemoved: got %d, want 1", r.BlobsRemoved)
+	if r.BlobsRemoved != 0 {
+		t.Errorf("BlobsRemoved: got %d, want 0 — the open-time pass never deletes blobs", r.BlobsRemoved)
 	}
 	if r.ManifestsRemoved != 1 {
 		t.Errorf("ManifestsRemoved: got %d, want 1", r.ManifestsRemoved)
@@ -331,14 +353,14 @@ func TestRecovery_OpenStore_RemovesOrphanInjectedAfterInit(t *testing.T) {
 	}
 }
 
-// TestRecovery_NoPublisher_NoPanic: with no publisher wired, recovery still
-// sweeps orphans — it just stays silent. Guards against a nil-publisher
+// TestRecovery_NoPublisher_NoPanic: with no publisher wired, the pass still
+// runs — it just stays silent. Guards against a nil-publisher
 // dereference in the report path.
 func TestRecovery_NoPublisher_NoPanic(t *testing.T) {
 	d := driverfx.LocalFS(t)
 
-	orphan := storekit.BlobPathForRef(t, fakeRef('q'))
-	if err := d.Put(context.Background(), orphan, strings.NewReader("x")); err != nil {
+	fragment := manifestPathForID(t, domain.ManifestDigest(fakeRef('q')))
+	if err := d.Put(context.Background(), fragment, strings.NewReader("half a manifest")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
@@ -350,8 +372,8 @@ func TestRecovery_NoPublisher_NoPanic(t *testing.T) {
 		t.Fatalf("InitStore (no publisher): %v", err)
 	}
 
-	if _, err := d.Stat(context.Background(), orphan); err == nil {
-		t.Errorf("orphan %q must be removed even without a publisher", orphan)
+	if _, err := d.Stat(context.Background(), fragment); err == nil {
+		t.Errorf("fragment %q must be removed even without a publisher", fragment)
 	}
 }
 
@@ -384,176 +406,164 @@ func (f *faultyIndex) ManifestExistsByDigest(ctx context.Context, digest domain.
 	return f.StoreIndex.ManifestExistsByDigest(ctx, digest)
 }
 
-// TestRecoverOrphans_TransientIndexError_Preserves: a transient error from the
-// index (Resolve for blobs, ManifestExistsByDigest for manifests) must leave
-// the corresponding file in place, remove nothing, and record the error.
-func TestRecoverOrphans_TransientIndexError_Preserves(t *testing.T) {
-	cases := []struct {
-		name  string
-		mkIdx func(base index.StoreIndex) *faultyIndex
-		stage func(t *testing.T, drv driver.Driver) string // staged path that must survive
-	}{
-		{"resolve error preserves blob",
-			func(b index.StoreIndex) *faultyIndex {
-				return &faultyIndex{StoreIndex: b, resolveErr: errors.New("simulated SQLite busy")}
-			},
-			func(t *testing.T, drv driver.Driver) string {
-				ref := strings.Repeat("ab", 16) + "cd"
-				p := "blobs/" + ref[:4] + "/" + ref[4:8] + "/" + ref
-				if err := drv.Put(context.Background(), p, strings.NewReader("orphan or not?")); err != nil {
-					t.Fatalf("Put blob: %v", err)
-				}
-				return p
-			}},
-		{"manifestExists error preserves manifest",
-			func(b index.StoreIndex) *faultyIndex {
-				return &faultyIndex{StoreIndex: b, manifestExistsErr: errors.New("simulated index outage")}
-			},
-			func(t *testing.T, drv driver.Driver) string {
-				id := strings.Repeat("ef", 16) + "00"
-				p := "manifests/" + id[:4] + "/" + id[4:8] + "/" + id
-				if err := drv.Put(context.Background(), p, strings.NewReader("{}")); err != nil {
-					t.Fatalf("Put manifest: %v", err)
-				}
-				return p
-			}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			drv := driverfx.LocalFS(t)
-			idx := tc.mkIdx(indexfx.Memory(t))
-			path := tc.stage(t, drv)
+// The pass in isolation. Its whole contract is what it REFUSES to do, so the
+// cases below are mostly about files that must still be there afterwards.
 
-			report, err := orphanscan.RecoverOrphans(context.Background(), drv, idx)
-			if err != nil {
-				t.Fatalf("RecoverOrphans: %v", err)
-			}
-
-			if _, err := drv.Stat(context.Background(), path); err != nil {
-				t.Errorf("%q removed despite transient index error: %v", path, err)
-			}
-			if report.BlobsRemoved != 0 || report.ManifestsRemoved != 0 {
-				t.Errorf("removed on transient error: blobs=%d manifests=%d, want 0/0", report.BlobsRemoved, report.ManifestsRemoved)
-			}
-			if len(report.Errors) == 0 {
-				t.Errorf("Errors empty; want >=1 recording the transient failure")
-			}
-		})
-	}
+// stubIngester stands in for the Store's manifest ingestion. Whatever it
+// returns decides the pass's reaction to a file the index does not know.
+type stubIngester struct {
+	err   error
+	calls int
 }
 
-// TestRecoverOrphans_TransientResolveError_DoesNotAbortSweep: a Resolve error
-// on blobs does not stop the sweep — staging is still cleaned, and one error
-// is recorded per failed Resolve.
-func TestRecoverOrphans_TransientResolveError_DoesNotAbortSweep(t *testing.T) {
-	drv := driverfx.LocalFS(t)
-	idx := &faultyIndex{
-		StoreIndex: indexfx.Memory(t),
-		resolveErr: errors.New("transient"),
-	}
+func (s *stubIngester) IngestManifest(context.Context, domain.ManifestDigest) error {
+	s.calls++
+	return s.err
+}
 
-	for i, suffix := range []string{"01", "02"} {
-		ref := strings.Repeat("cd", 16) + suffix
-		path := "blobs/" + ref[:4] + "/" + ref[4:8] + "/" + ref
-		if err := drv.Put(context.Background(), path, strings.NewReader("blob")); err != nil {
-			t.Fatalf("blob %d: %v", i, err)
-		}
-	}
-	stagingPath := ".staging/leftover-from-crashed-put"
-	if err := drv.Put(context.Background(), stagingPath, strings.NewReader("staging")); err != nil {
-		t.Fatalf("staging: %v", err)
-	}
+// TestReconcile_UnknownBlobSurvives: the index not resolving a blob ref means
+// the index does not know it — never that the bytes are garbage. Blobs are
+// reclaimed by GC, on the "no manifest references it" criterion, two-phase
+// and with a delay. The open-time pass must not touch them.
+func TestReconcile_UnknownBlobSurvives(t *testing.T) {
+	f := newRecoveryFixture(t)
+	blob := storekit.BlobPathForRef(t, fakeRef('a'))
+	f.stageFile(t, blob, "bytes nobody has claimed yet")
 
-	report, err := orphanscan.RecoverOrphans(context.Background(), drv, idx)
+	report, err := orphanscan.Reconcile(context.Background(), f.drv, f.idx, &stubIngester{})
 	if err != nil {
-		t.Fatalf("RecoverOrphans: %v", err)
-	}
-
-	if _, err := drv.Stat(context.Background(), stagingPath); err == nil {
-		t.Errorf("staging file %q must be removed even when blobs sweep had errors", stagingPath)
-	}
-	if report.StagingRemoved != 1 {
-		t.Errorf("StagingRemoved = %d; want 1", report.StagingRemoved)
+		t.Fatalf("Reconcile: %v", err)
 	}
 	if report.BlobsRemoved != 0 {
-		t.Errorf("BlobsRemoved = %d; want 0", report.BlobsRemoved)
+		t.Errorf("BlobsRemoved: got %d, want 0 — the pass never deletes blobs", report.BlobsRemoved)
 	}
-	if len(report.Errors) < 2 {
-		t.Errorf("Errors has %d entries; want >=2 (one per failed Resolve)", len(report.Errors))
+	if !f.fileExists(t, blob) {
+		t.Fatal("blob deleted at open; reclaiming blobs belongs to GC")
 	}
 }
 
-// TestRecoverOrphans_RemoveFails_OrphanStays: when the driver's Remove fails,
-// the file stays and the injected error is recorded.
-func TestRecoverOrphans_RemoveFails_OrphanStays(t *testing.T) {
-	inner := driverfx.LocalFS(t)
-	drv := driverfx.Faulty(t, inner,
-		faulty.WithSeed(42),
-		faulty.WithFailureRate(faulty.MethodRemove, 1.0),
-	)
+// TestReconcile_WholeManifestIsIngested: a manifest the index does not know
+// is truth the index has forgotten — a crash before the row was written, a
+// hand-merged tree, a restore. The pass reads it back in and deletes nothing.
+func TestReconcile_WholeManifestIsIngested(t *testing.T) {
+	f := newRecoveryFixture(t)
+	path := manifestPathForID(t, domain.ManifestDigest(fakeRef('m')))
+	f.stageFile(t, path, "whole manifest bytes")
 
-	stagingPath := ".staging/leftover-from-crash"
-	if err := inner.Put(context.Background(), stagingPath, strings.NewReader("x")); err != nil {
-		t.Fatalf("inner.Put: %v", err)
-	}
-
-	report, err := orphanscan.RecoverOrphans(context.Background(), drv, indexfx.Memory(t))
+	ing := &stubIngester{} // ingestion succeeds
+	report, err := orphanscan.Reconcile(context.Background(), f.drv, f.idx, ing)
 	if err != nil {
-		t.Fatalf("RecoverOrphans: %v", err)
+		t.Fatalf("Reconcile: %v", err)
 	}
+	if ing.calls != 1 {
+		t.Errorf("IngestManifest calls: got %d, want 1", ing.calls)
+	}
+	if report.ManifestsIndexed != 1 {
+		t.Errorf("ManifestsIndexed: got %d, want 1", report.ManifestsIndexed)
+	}
+	if report.ManifestsRemoved != 0 {
+		t.Errorf("ManifestsRemoved: got %d, want 0", report.ManifestsRemoved)
+	}
+	if !f.fileExists(t, path) {
+		t.Fatal("a whole manifest must never be deleted by the pass")
+	}
+}
 
-	if _, err := inner.Stat(context.Background(), stagingPath); err != nil {
-		t.Errorf("staging file should remain when Remove fails: %v", err)
+// TestReconcile_FragmentIsRemoved: bytes that do not hash to their own name
+// cannot be a whole manifest — only a write interrupted mid-flight. This is
+// the single deletion the pass performs, and it rests on the file's own
+// arithmetic rather than on the index's word.
+func TestReconcile_FragmentIsRemoved(t *testing.T) {
+	f := newRecoveryFixture(t)
+	path := manifestPathForID(t, domain.ManifestDigest(fakeRef('f')))
+	f.stageFile(t, path, "half a manifest")
+
+	ing := &stubIngester{err: errs.ErrCorruptedManifest}
+	report, err := orphanscan.Reconcile(context.Background(), f.drv, f.idx, ing)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
 	}
-	if report.StagingRemoved != 0 {
-		t.Errorf("StagingRemoved = %d; want 0 when every Remove fails", report.StagingRemoved)
+	if report.ManifestsRemoved != 1 {
+		t.Errorf("ManifestsRemoved: got %d, want 1", report.ManifestsRemoved)
+	}
+	if f.fileExists(t, path) {
+		t.Fatal("a fragment must be removed")
+	}
+}
+
+// TestReconcile_UnreadableManifestSurvives: any failure other than a hash
+// mismatch — a missing key, an I/O fault, an unknown schema — says nothing
+// about whether the file is garbage. Report it and keep it.
+func TestReconcile_UnreadableManifestSurvives(t *testing.T) {
+	f := newRecoveryFixture(t)
+	path := manifestPathForID(t, domain.ManifestDigest(fakeRef('u')))
+	f.stageFile(t, path, "encrypted with a key we do not have")
+
+	ing := &stubIngester{err: errors.New("no key for this manifest")}
+	report, err := orphanscan.Reconcile(context.Background(), f.drv, f.idx, ing)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if report.ManifestsRemoved != 0 {
+		t.Errorf("ManifestsRemoved: got %d, want 0", report.ManifestsRemoved)
+	}
+	if len(report.Errors) != 1 {
+		t.Errorf("non-fatal errors: got %d, want 1", len(report.Errors))
+	}
+	if !f.fileExists(t, path) {
+		t.Fatal("an unreadable manifest must survive: unreadable is not garbage")
+	}
+}
+
+// TestReconcile_TransientIndexError_Preserves: if the index cannot answer
+// "do you know this manifest", that is trouble with the index, not evidence
+// about the file. Nothing is removed and nothing is ingested.
+func TestReconcile_TransientIndexError_Preserves(t *testing.T) {
+	f := newRecoveryFixture(t)
+	path := manifestPathForID(t, domain.ManifestDigest(fakeRef('t')))
+	f.stageFile(t, path, "{}")
+
+	idx := &faultyIndex{StoreIndex: f.idx, manifestExistsErr: errors.New("sqlite hiccup")}
+	ing := &stubIngester{}
+	report, err := orphanscan.Reconcile(context.Background(), f.drv, idx, ing)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if ing.calls != 0 {
+		t.Errorf("IngestManifest called %d times despite an index error", ing.calls)
+	}
+	if report.ManifestsRemoved != 0 {
+		t.Errorf("ManifestsRemoved: got %d, want 0", report.ManifestsRemoved)
+	}
+	if !f.fileExists(t, path) {
+		t.Fatal("file removed on an index error")
+	}
+}
+
+// TestReconcile_RemoveFails_FragmentStays: a fragment whose deletion fails
+// stays on disk, the error is recorded, and the pass continues.
+func TestReconcile_RemoveFails_FragmentStays(t *testing.T) {
+	f := newRecoveryFixture(t)
+	path := manifestPathForID(t, domain.ManifestDigest(fakeRef('r')))
+	f.stageFile(t, path, "half a manifest")
+
+	drv := driverfx.Faulty(t, f.drv, faulty.WithFailureRate(faulty.MethodRemove, 1.0))
+	ing := &stubIngester{err: errs.ErrCorruptedManifest}
+	report, err := orphanscan.Reconcile(context.Background(), drv, f.idx, ing)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if report.ManifestsRemoved != 0 {
+		t.Errorf("ManifestsRemoved: got %d, want 0", report.ManifestsRemoved)
 	}
 	if len(report.Errors) == 0 {
-		t.Errorf("Errors empty; want the injected Remove failure recorded")
+		t.Error("a failed Remove must be recorded")
 	}
-	var foundInjected bool
-	for _, e := range report.Errors {
-		if errors.Is(e, errs.ErrInjected) {
-			foundInjected = true
-			break
-		}
-	}
-	if !foundInjected {
-		t.Errorf("Errors did not contain errs.ErrInjected; entries=%v", report.Errors)
+	if !f.fileExists(t, path) {
+		t.Fatal("the file should still be there after a failed Remove")
 	}
 }
 
-// TestRecoverOrphans_Default_RemovesUnknownBlob: the baseline — a blob the
-// index does not know (Resolve returns NotFound on an empty index) is removed.
-func TestRecoverOrphans_Default_RemovesUnknownBlob(t *testing.T) {
-	drv := driverfx.LocalFS(t)
-	idx := indexfx.Memory(t)
-
-	ref := strings.Repeat("12", 16) + "ff"
-	blobPath := "blobs/" + ref[:4] + "/" + ref[4:8] + "/" + ref
-	if err := drv.Put(context.Background(), blobPath, strings.NewReader("orphan")); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-
-	report, err := orphanscan.RecoverOrphans(context.Background(), drv, idx)
-	if err != nil {
-		t.Fatalf("RecoverOrphans: %v", err)
-	}
-
-	if _, err := drv.Stat(context.Background(), blobPath); err == nil {
-		t.Errorf("orphan blob should have been removed (Resolve returns NotFound on empty index)")
-	}
-	if report.BlobsRemoved != 1 {
-		t.Errorf("BlobsRemoved = %d; want 1", report.BlobsRemoved)
-	}
-}
-
-// --- recovery kit: descriptor restore ----------------------------
-
-// TestRestoreDescriptorFromRecoveryKit_RoundTrip bootstraps an encrypted Store
-// (which emits a Recovery Kit), deletes both descriptor replicas to simulate
-// catastrophic loss, then restores from the kit and asserts identity and
-// crypto material round-trip exactly, including the L1 shadow replica.
 func TestRestoreDescriptorFromRecoveryKit_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	drv := driverfx.LocalFS(t)

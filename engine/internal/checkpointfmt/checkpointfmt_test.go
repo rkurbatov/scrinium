@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"scrinium.dev/domain"
-	"scrinium.dev/engine/agent/internal/checkpointfmt"
+	"scrinium.dev/engine/internal/checkpointfmt"
 )
 
 func TestName_ParseID_RoundTrip(t *testing.T) {

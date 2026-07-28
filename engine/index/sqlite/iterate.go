@@ -180,7 +180,7 @@ func (i *Index) ManifestsByBlobRef(
 		LEFT JOIN blobs b ON b.blob_ref = m.blob_ref
 		WHERE mb.blob_ref = ?
 		ORDER BY m.manifest_digest`
-	rows, err := i.db.QueryContext(ctx, query, blobRef)
+	rows, err := i.db.QueryContext(ctx, query, hexKey(blobRef))
 	if err != nil {
 		return classifyError(err)
 	}
@@ -232,7 +232,7 @@ func iterateBlobRefRows(
 			return err
 		}
 		var ref string
-		if err := rows.Scan(&ref); err != nil {
+		if err := rows.Scan(hexOut{dst: &ref}); err != nil {
 			return err
 		}
 		if cbErr := cb(ref); cbErr != nil {

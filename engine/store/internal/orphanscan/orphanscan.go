@@ -13,49 +13,76 @@ import (
 	"scrinium.dev/event"
 )
 
-// OrphanReport is the result of a RecoverOrphans pass. Counts are
-// files actually removed; Errors collects non-fatal per-file failures
-// that neither stop the scan nor block the Store from opening.
+// OrphanReport is the result of a Reconcile pass. Errors collects non-fatal
+// per-file failures that neither stop the pass nor block the Store from
+// opening.
 type OrphanReport struct {
-	StagingRemoved   int
-	BlobsRemoved     int
+	StagingRemoved int
+	// BlobsRemoved stays at zero here: the open-time pass never deletes a
+	// blob (ADR-118). Reclaiming blobs belongs to the GC agent and to the
+	// media reconciliation, both two-phase and both outside open. The field
+	// remains so those passes can report through the same shape.
+	BlobsRemoved int
+	// ManifestsRemoved counts fragments only — files whose bytes do not hash
+	// to their own name, i.e. writes interrupted mid-flight.
 	ManifestsRemoved int
+	// ManifestsIndexed counts whole manifests the index did not know and the
+	// pass read back into it.
+	ManifestsIndexed int
 	Errors           []error
 	Duration         time.Duration
 }
 
-// recoverIndex is the slice of index.StoreIndex RecoverOrphans depends on:
-// it resolves a blob ref to detect a dangling blob file, and checks whether
-// a manifest digest is present to detect a dangling manifest file. Declaring
-// the narrow port here keeps orphan recovery decoupled from index methods it
-// never calls. Any full index.StoreIndex value satisfies it structurally.
+// recoverIndex is the slice of index.StoreIndex the pass depends on: one
+// question, "does the index know this manifest". Declaring the narrow port
+// here keeps reconciliation decoupled from index methods it never calls. Any
+// full index.StoreIndex value satisfies it structurally.
 type recoverIndex interface {
-	Resolve(ctx context.Context, blobRef string) (domain.PhysicalAddress, error)
 	ManifestExistsByDigest(ctx context.Context, digest domain.ManifestDigest) (bool, error)
 }
 
-// RecoverOrphans is a forward sweep of the filesystem against the
-// index, removing three classes of physical orphan left by crashed
-// writes:
+// ManifestIngester reads a manifest file the index does not know and writes
+// it into the index. Supplied by the Store because reading involves the
+// crypto material and the content plane, neither of which belongs here.
 //
-//  1. staging/* — every file; staging is per-Put and per-process, so
-//     anything that survived a restart is garbage from a crashed write.
-//  2. blobs/<x>/<y>/<ref> — files whose ref does not resolve through
-//     StoreIndex.Resolve (crash between Rename and IndexManifest).
-//  3. manifests/<x>/<y>/<id> — files absent from the manifests table
-//     (crash between the manifest Put and IndexManifest).
+// The contract that matters: a file whose bytes do not hash to its own name
+// must come back as errs.ErrCorruptedManifest, and nothing else may. That is
+// the only signal on which the pass deletes.
+type ManifestIngester interface {
+	IngestManifest(ctx context.Context, digest domain.ManifestDigest) error
+}
+
+// Reconcile is the open-time pass over the Location. It is a reconciliation,
+// not a cleanup (ADR-118): its job is to make the index a complete picture of
+// the manifests on disk, and to sweep the debris of writes that never
+// finished.
 //
-// The reverse sweep (index rows pointing at vanished files) is the
-// rebuild agent's job, not this one. ListObjectsWithModTime treats a
-// missing prefix as an empty walk, so this is safe to call after both
-// InitStore and OpenStore.
-func RecoverOrphans(ctx context.Context, drv driver.Driver, idx recoverIndex) (OrphanReport, error) {
+// Three actions, and the difference between them is the point:
+//
+//  1. staging/* — removed unconditionally. Staging is per-Put and
+//     per-process, so anything that survived a restart is garbage from an
+//     interrupted write.
+//  2. manifests/<x>/<y>/<digest> — reconciled. A file the index already
+//     knows is left alone. A file it does not know is READ: a manifest names
+//     itself by the hash of its own bytes, so a fragment of an interrupted
+//     write fails that check and is removed, while a whole manifest is truth
+//     the index has forgotten and is read back into it. This covers a crash
+//     between writing the manifest and writing the row, a hand-merged tree,
+//     a restore from a copy — all one action.
+//  3. blobs — untouched. The index not resolving a ref means the index does
+//     not know, not that the bytes are garbage; a blob is only reclaimable
+//     when no manifest references it, which is the GC agent's criterion,
+//     applied two-phase and with a delay, after completeness is proven.
+//
+// The pass never deletes a file because the index lacks a row for it. The
+// index is derived; the manifest is truth. Deleting truth on a cache's word
+// is how an empty index takes the corpus with it.
+func Reconcile(ctx context.Context, drv driver.Driver, idx recoverIndex, ing ManifestIngester) (OrphanReport, error) {
 	start := time.Now()
 	report := OrphanReport{}
 
-	// 1. Sweep .staging/. Unconditional removal: any
-	// file here is from a crashed prior process. Per-file Remove
-	// errors do not stop the sweep.
+	// 1. Sweep .staging/. Unconditional removal: any file here is from a
+	// crashed prior process. Per-file Remove errors do not stop the sweep.
 	if err := drv.ListObjectsWithModTime(ctx, domain.StagingPrefix, time.Time{},
 		func(om driver.ObjectMeta) error {
 			if err := ctx.Err(); err != nil {
@@ -63,58 +90,18 @@ func RecoverOrphans(ctx context.Context, drv driver.Driver, idx recoverIndex) (O
 			}
 			if rmErr := drv.Remove(ctx, om.Path); rmErr != nil {
 				report.Errors = append(report.Errors,
-					fmt.Errorf("recoverOrphans: staging remove %q: %w", om.Path, rmErr))
+					fmt.Errorf("reconcile: staging remove %q: %w", om.Path, rmErr))
 				return nil
 			}
 			report.StagingRemoved++
 			return nil
 		}); err != nil {
-		// ctx.Err() or a List-level failure aborts the whole
-		// recovery; partial reports are still useful so we
-		// return what we have alongside the error.
 		report.Duration = time.Since(start)
-		return report, fmt.Errorf("recoverOrphans: staging sweep: %w", err)
+		return report, fmt.Errorf("reconcile: staging sweep: %w", err)
 	}
 
-	// 2. Sweep blobs/. For every file, parse the blob ref out of
-	// the last path segment and ask the index whether it knows
-	// about it. errs.ErrArtifactNotFound — orphan, remove. Any other
-	// error from Resolve is index infrastructure trouble; we log
-	// and skip the file (better leave a possible orphan on disk
-	// than mistake healthy data for orphan because of a transient
-	// SQLite hiccup).
-	if err := drv.ListObjectsWithModTime(ctx, "blobs", time.Time{},
-		func(om driver.ObjectMeta) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			ref, err := layout.RefFromBlobPath(om.Path)
-			if err != nil {
-				report.Errors = append(report.Errors,
-					fmt.Errorf("recoverOrphans: blobs parse: %w", err))
-				return nil
-			}
-			_, resolveErr := idx.Resolve(ctx, ref)
-			switch {
-			case errors.Is(resolveErr, errs.ErrArtifactNotFound):
-				if rmErr := drv.Remove(ctx, om.Path); rmErr != nil {
-					report.Errors = append(report.Errors,
-						fmt.Errorf("recoverOrphans: blobs remove %q: %w", om.Path, rmErr))
-					return nil
-				}
-				report.BlobsRemoved++
-			case resolveErr != nil:
-				report.Errors = append(report.Errors,
-					fmt.Errorf("recoverOrphans: blobs resolve %q: %w", ref, resolveErr))
-			}
-			return nil
-		}); err != nil {
-		report.Duration = time.Since(start)
-		return report, fmt.Errorf("recoverOrphans: blobs sweep: %w", err)
-	}
-
-	// 3. Sweep manifests/. Same shape as the blobs sweep, but
-	// against ManifestExists rather than Resolve.
+	// 2. Reconcile manifests/. Names are enough for the common case: the
+	// file is read only when the index does not know it.
 	if err := drv.ListObjectsWithModTime(ctx, "manifests", time.Time{},
 		func(om driver.ObjectMeta) error {
 			if err := ctx.Err(); err != nil {
@@ -122,29 +109,51 @@ func RecoverOrphans(ctx context.Context, drv driver.Driver, idx recoverIndex) (O
 			}
 			digest, err := layout.DigestFromManifestPath(om.Path)
 			if err != nil {
+				// A name we cannot parse is a file of unknown nature. Not
+				// ours to judge, so not ours to delete.
 				report.Errors = append(report.Errors,
-					fmt.Errorf("recoverOrphans: manifests parse: %w", err))
+					fmt.Errorf("reconcile: manifests parse: %w", err))
 				return nil
 			}
-			exists, err := idx.ManifestExistsByDigest(ctx, digest)
+			known, err := idx.ManifestExistsByDigest(ctx, digest)
 			if err != nil {
+				// Index trouble is not evidence about the file. Leave it be.
 				report.Errors = append(report.Errors,
-					fmt.Errorf("recoverOrphans: manifests exists %q: %w", digest, err))
+					fmt.Errorf("reconcile: manifests exists %q: %w", digest, err))
 				return nil
 			}
-			if exists {
+			if known {
 				return nil
 			}
-			if rmErr := drv.Remove(ctx, om.Path); rmErr != nil {
+			if ing == nil {
 				report.Errors = append(report.Errors,
-					fmt.Errorf("recoverOrphans: manifests remove %q: %w", om.Path, rmErr))
+					fmt.Errorf("reconcile: manifest %q unknown to the index and no ingester supplied", digest))
 				return nil
 			}
-			report.ManifestsRemoved++
+			switch err := ing.IngestManifest(ctx, digest); {
+			case err == nil:
+				report.ManifestsIndexed++
+			case errors.Is(err, errs.ErrCorruptedManifest):
+				// The bytes do not hash to the name: an interrupted write,
+				// never a whole artifact. This is the one deletion the pass
+				// performs, and it rests on the file's own arithmetic rather
+				// than on anyone's opinion.
+				if rmErr := drv.Remove(ctx, om.Path); rmErr != nil {
+					report.Errors = append(report.Errors,
+						fmt.Errorf("reconcile: fragment remove %q: %w", om.Path, rmErr))
+					return nil
+				}
+				report.ManifestsRemoved++
+			default:
+				// Unreadable for any other reason — missing key, I/O, a
+				// decoder that does not know this schema. Report and keep.
+				report.Errors = append(report.Errors,
+					fmt.Errorf("reconcile: ingest %q: %w", digest, err))
+			}
 			return nil
 		}); err != nil {
 		report.Duration = time.Since(start)
-		return report, fmt.Errorf("recoverOrphans: manifests sweep: %w", err)
+		return report, fmt.Errorf("reconcile: manifests pass: %w", err)
 	}
 
 	report.Duration = time.Since(start)
@@ -164,6 +173,7 @@ func PublishOrphanReport(pub event.Publisher, r OrphanReport) {
 			StagingRemoved:   r.StagingRemoved,
 			BlobsRemoved:     r.BlobsRemoved,
 			ManifestsRemoved: r.ManifestsRemoved,
+			ManifestsIndexed: r.ManifestsIndexed,
 			NonFatalErrors:   len(r.Errors),
 			Duration:         r.Duration,
 		},

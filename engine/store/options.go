@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"time"
 
 	"log/slog"
@@ -23,6 +24,8 @@ type storeOptions struct {
 	purgeOnReinit    bool
 	cfg              *config.StoreConfig
 	storeIndex       index.StoreIndex
+	recoverIndex     IndexRecoverer
+	allowRecovery    bool
 	publisher        event.Publisher
 	hashRegistry     domain.HashRegistry
 	livenessInterval time.Duration
@@ -80,6 +83,31 @@ func WithConfig(cfg config.StoreConfig) StoreOption {
 // WithStoreIndex provides the StoreIndex implementation. Required.
 func WithStoreIndex(idx index.StoreIndex) StoreOption {
 	return func(o *storeOptions) { o.storeIndex = idx }
+}
+
+// IndexRecoverer runs the index recovery procedure (ADR-118): restore the
+// latest checkpoint if there is one, read in the manifests written since,
+// and leave the index holding the whole set. Supplied from the outside
+// because the procedure lives in the rebuild agent, which is assembled above
+// the Store — the Store only decides *whether* it must run.
+type IndexRecoverer interface {
+	RecoverIndex(ctx context.Context) error
+}
+
+// WithIndexRecovery supplies the recovery procedure the Store invokes when
+// the index needs it. Without it, an index that must be recovered leaves the
+// open refusing (ErrIndexIncomplete / ErrIndexDamaged) rather than proceeding
+// over an index that does not know the corpus.
+func WithIndexRecovery(r IndexRecoverer) StoreOption {
+	return func(o *storeOptions) { o.recoverIndex = r }
+}
+
+// WithAllowIndexRecovery is the caller's explicit "yes, rebuild". It turns
+// the refusal on an index that was supposed to survive into the ordinary
+// recovery procedure. The ephemeral case (Paranoid) never needs it: there
+// recovery is the expected path and runs on every open.
+func WithAllowIndexRecovery() StoreOption {
+	return func(o *storeOptions) { o.allowRecovery = true }
 }
 
 // WithPublisher provides a Publisher implementation for emitting

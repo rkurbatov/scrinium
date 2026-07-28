@@ -28,7 +28,7 @@ import (
 func (i *Index) Resolve(ctx context.Context, blobRef string) (domain.PhysicalAddress, error) {
 	const stmt = `SELECT physical_path FROM blobs WHERE blob_ref = ?`
 	var addr domain.PhysicalAddress
-	err := i.db.QueryRowContext(ctx, stmt, blobRef).
+	err := i.db.QueryRowContext(ctx, stmt, hexKey(blobRef)).
 		Scan(&addr.Path)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -56,7 +56,7 @@ func (i *Index) ExistsByContent(ctx context.Context, hash domain.ContentHash, or
 		WHERE content_hash = ? AND original_size = ? AND crypto_identity = ?
 		LIMIT 1`
 	var ref string
-	err := i.db.QueryRowContext(ctx, stmt, string(hash), originalSize, string(crypto)).Scan(&ref)
+	err := i.db.QueryRowContext(ctx, stmt, hexKey(hash), originalSize, string(crypto)).Scan(hexOut{dst: &ref})
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return "", false, nil
@@ -93,7 +93,7 @@ func (i *Index) ExistsByHash(ctx context.Context, hash domain.ContentHash, origi
 		WHERE content_hash = ? AND original_size = ? AND crypto_identity = ?
 		LIMIT 1`
 	var one int
-	err := i.db.QueryRowContext(ctx, stmt, string(hash), originalSize, string(crypto)).Scan(&one)
+	err := i.db.QueryRowContext(ctx, stmt, hexKey(hash), originalSize, string(crypto)).Scan(&one)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return domain.BlobNotFound, nil
@@ -114,7 +114,7 @@ func (i *Index) ExistsByHash(ctx context.Context, hash domain.ContentHash, origi
 func (i *Index) GetRefCount(ctx context.Context, blobRef string) (int, error) {
 	const stmt = `SELECT ref_count FROM blobs WHERE blob_ref = ?`
 	var n int
-	err := i.db.QueryRowContext(ctx, stmt, blobRef).Scan(&n)
+	err := i.db.QueryRowContext(ctx, stmt, hexKey(blobRef)).Scan(&n)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return 0, errs.ErrArtifactNotFound
@@ -140,18 +140,25 @@ func (i *Index) GetRefCount(ctx context.Context, blobRef string) (int, error) {
 // artifacts are not indexed (ADR-85), so no name column exists.
 func scanManifestRow(rows *sql.Rows) (domain.Manifest, error) {
 	var (
-		manifestDigest     string
-		artifactID         sql.NullString
-		sessionID          domain.SessionID
-		createdAt          string
-		blobRef, retention sql.NullString
-		contentHash        sql.NullString
-		originalSize       sql.NullInt64
+		manifestDigest string
+		artifactID     sql.NullString
+		sessionID      domain.SessionID
+		createdAt      string
+		retention      sql.NullString
+		originalSize   sql.NullInt64
+
+		// Key columns come back as raw bytes and are re-hexed on the way
+		// out (keys.go); validity of the nullable ones is tracked here
+		// because a hex string alone cannot express NULL.
+		blobRef          string
+		blobRefValid     bool
+		contentHash      string
+		contentHashValid bool
 	)
 	if err := rows.Scan(
-		&manifestDigest, &artifactID, &sessionID,
-		&blobRef, &createdAt, &retention,
-		&contentHash, &originalSize,
+		hexOut{dst: &manifestDigest}, &artifactID, &sessionID,
+		hexOutNull{dst: &blobRef, valid: &blobRefValid}, &createdAt, &retention,
+		hexOutNull{dst: &contentHash, valid: &contentHashValid}, &originalSize,
 	); err != nil {
 		return domain.Manifest{}, err
 	}
@@ -162,15 +169,15 @@ func scanManifestRow(rows *sql.Rows) (domain.Manifest, error) {
 	if artifactID.Valid {
 		m.ArtifactID = domain.ArtifactID(artifactID.String)
 	}
-	if blobRef.Valid {
+	if blobRefValid {
 		// NULL when LayoutHeader.BlobStorage == "Inline" (§9.1.2);
 		// stays as the zero BlobRef. Callers that need to know whether
 		// this is Inline must read the file. Transitional single-blob
 		// cache; the authoritative list is manifest_blobs (ADR-92).
-		m.BlobRefs = []domain.BlobRef{domain.BlobRef(blobRef.String)}
+		m.BlobRefs = []domain.BlobRef{domain.BlobRef(blobRef)}
 	}
-	if contentHash.Valid {
-		m.ContentHash = domain.ContentHash(contentHash.String)
+	if contentHashValid {
+		m.ContentHash = domain.ContentHash(contentHash)
 	}
 	if originalSize.Valid {
 		m.OriginalSize = originalSize.Int64

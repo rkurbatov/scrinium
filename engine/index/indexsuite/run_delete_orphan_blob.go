@@ -30,9 +30,9 @@ func runDeleteOrphanBlob(t *testing.T, f Factory) {
 	t.Run("RemovesOrphanRow", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		seedOrphan(t, idx, "orph-1", "blob-o1")
+		seedOrphan(t, idx, "orph-1", "b10b0f01")
 
-		removed, err := idx.DeleteOrphanBlob(ctx, "blob-o1")
+		removed, err := idx.DeleteOrphanBlob(ctx, "b10b0f01")
 		if err != nil {
 			t.Fatalf("DeleteOrphanBlob: %v", err)
 		}
@@ -48,7 +48,7 @@ func runDeleteOrphanBlob(t *testing.T, f Factory) {
 			t.Fatalf("ListOrphanBlobs: %v", err)
 		}
 		for _, r := range got {
-			if r == "blob-o1" {
+			if r == "b10b0f01" {
 				t.Errorf("blob-o1 still present after DeleteOrphanBlob")
 			}
 		}
@@ -57,15 +57,15 @@ func runDeleteOrphanBlob(t *testing.T, f Factory) {
 	t.Run("KeepsRevivedBlob", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		seedOrphan(t, idx, "orph-1", "blob-shared")
+		seedOrphan(t, idx, "orph-1", "b10b5ded")
 		// Revive: a new artifact references the same blob → ref_count
 		// back to 1. DeleteOrphanBlob must NOT remove it.
-		reviver := manifestfx.BlobWithHash("reviver", "blob-shared", manifestfx.SyntheticHash('a'), 1024)
+		reviver := manifestfx.BlobWithHash("reviver", "b10b5ded", manifestfx.SyntheticHash('a'), 1024)
 		if err := idx.IndexManifest(ctx, reviver, manifestfx.PhysAddr("p/blob-shared")); err != nil {
 			t.Fatalf("revive: %v", err)
 		}
 
-		removed, err := idx.DeleteOrphanBlob(ctx, "blob-shared")
+		removed, err := idx.DeleteOrphanBlob(ctx, "b10b5ded")
 		if err != nil {
 			t.Fatalf("DeleteOrphanBlob: %v", err)
 		}
@@ -73,7 +73,7 @@ func runDeleteOrphanBlob(t *testing.T, f Factory) {
 			t.Fatal("removed = true, want false: blob was revived (ref_count > 0)")
 		}
 		// Still resolvable (row intact).
-		if _, err := idx.Resolve(ctx, "blob-shared"); err != nil {
+		if _, err := idx.Resolve(ctx, "b10b5ded"); err != nil {
 			t.Errorf("revived blob no longer resolvable: %v", err)
 		}
 	})
@@ -81,7 +81,7 @@ func runDeleteOrphanBlob(t *testing.T, f Factory) {
 	t.Run("MissingBlobIsNoOp", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		removed, err := idx.DeleteOrphanBlob(ctx, "nonexistent")
+		removed, err := idx.DeleteOrphanBlob(ctx, "0e0e0e0e")
 		if err != nil {
 			t.Errorf("missing blob must be a no-op, got %v", err)
 		}
@@ -94,11 +94,11 @@ func runDeleteOrphanBlob(t *testing.T, f Factory) {
 		ctx := t.Context()
 		idx := f.New(t)
 		// Live: indexed, never deleted → ref_count = 1.
-		m := manifestfx.BlobWithHash("live-1", "blob-live", manifestfx.SyntheticHash('a'), 1024)
+		m := manifestfx.BlobWithHash("live-1", "b10b01fe", manifestfx.SyntheticHash('a'), 1024)
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p/blob-live")); err != nil {
 			t.Fatalf("seed live: %v", err)
 		}
-		removed, err := idx.DeleteOrphanBlob(ctx, "blob-live")
+		removed, err := idx.DeleteOrphanBlob(ctx, "b10b01fe")
 		if err != nil {
 			t.Fatalf("DeleteOrphanBlob: %v", err)
 		}

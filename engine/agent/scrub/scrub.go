@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"scrinium.dev/domain"
@@ -59,6 +60,14 @@ type ScrubStats struct {
 	// will not catch it, the scrub cycle does. Populated only when the
 	// index implements index.DuplicateHandleAuditor.
 	DuplicateHandles int64
+
+	// ManifestFiles and ManifestRows are the census (ADR-118): manifest
+	// files on the Location versus rows in the index. They are counted, not
+	// acted on — a persistent gap is the only cheap signal that the index
+	// has silently lost rows, which no question put to the index can
+	// reveal. Zero for a backend that cannot enumerate its manifests.
+	ManifestFiles int64
+	ManifestRows  int64
 }
 
 // ScrubAgent is the background blob-integrity verifier.
@@ -230,6 +239,8 @@ func scrubStatsMap(s ScrubStats) map[string]int64 {
 		"verified_blobs":    s.VerifiedBlobs,
 		"failed_blobs":      s.FailedBlobs,
 		"duplicate_handles": s.DuplicateHandles,
+		"manifest_files":    s.ManifestFiles,
+		"manifest_rows":     s.ManifestRows,
 	}
 }
 
@@ -336,6 +347,23 @@ func (a *scrubAgent) verify(ctx context.Context) (ScrubStats, error) {
 	if err := agent.FirstNonCtxErr(blobErr, manErr); err != nil {
 		return stats, fmt.Errorf("scrub.Scrub.RunNow: %w", err)
 	}
+	// The census closes the cycle: it costs a directory listing and one
+	// walk of the manifest rows, reads nothing, and needs no key. It never
+	// deletes — a disagreement is a reason to reconcile, reported here and
+	// acted on elsewhere (ADR-118).
+	if c, err := a.takeCensus(ctx); err == nil {
+		stats.ManifestFiles, stats.ManifestRows = c.Files, c.Rows
+		if !c.Agrees() {
+			a.Logger().LogAttrs(ctx, slog.LevelWarn,
+				"manifest census disagrees: the index is not the whole truth for this Location",
+				slog.Int64("manifest_files", c.Files),
+				slog.Int64("manifest_rows", c.Rows))
+		}
+	} else if !errors.Is(err, errNoCensus) {
+		a.Logger().LogAttrs(ctx, slog.LevelInfo,
+			"manifest census skipped", slog.String("reason", err.Error()))
+	}
+
 	return stats, nil
 }
 

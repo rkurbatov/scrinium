@@ -2,6 +2,7 @@ package fspath_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"testing"
 	"time"
@@ -53,8 +54,9 @@ func makeFSManifest(t *testing.T, id domain.ArtifactID, path string) domain.Mani
 	}
 	return domain.Manifest{
 		ArtifactID:   id,
-		BlobRefs:     []domain.BlobRef{"sha256-" + domain.BlobRef(id)},
-		ContentHash:  "sha256-" + domain.ContentHash(id),
+		Digest:       domain.ManifestDigest(fxKey(id)),
+		BlobRefs:     []domain.BlobRef{domain.BlobRef(fxKey(id))},
+		ContentHash:  domain.ContentHash(fxKey(id)),
 		OriginalSize: 100,
 		CreatedAt:    time.Now().UTC(),
 		LayoutHeader: domain.LayoutHeader{BlobStorage: domain.LayoutTarget},
@@ -69,8 +71,9 @@ func makeForeignManifest(t *testing.T, id domain.ArtifactID) domain.Manifest {
 	raw, _ := json.Marshal(map[string]any{"email": map[string]string{"subject": "hi"}})
 	return domain.Manifest{
 		ArtifactID:   id,
-		BlobRefs:     []domain.BlobRef{"sha256-" + domain.BlobRef(id)},
-		ContentHash:  "sha256-" + domain.ContentHash(id),
+		Digest:       domain.ManifestDigest(fxKey(id)),
+		BlobRefs:     []domain.BlobRef{domain.BlobRef(fxKey(id))},
+		ContentHash:  domain.ContentHash(fxKey(id)),
 		OriginalSize: 50,
 		CreatedAt:    time.Now().UTC(),
 		LayoutHeader: domain.LayoutHeader{BlobStorage: domain.LayoutTarget},
@@ -155,8 +158,9 @@ func TestIndex_NoMetadata_Skipped(t *testing.T) {
 
 	m := domain.Manifest{
 		ArtifactID:   "bare-1",
-		BlobRefs:     []domain.BlobRef{"sha256-bare"},
-		ContentHash:  "sha256-bare",
+		Digest:       domain.ManifestDigest(fxKey("bare-1")),
+		BlobRefs:     []domain.BlobRef{"ba4e0000"},
+		ContentHash:  "ba4e0000",
 		OriginalSize: 10,
 		CreatedAt:    time.Now().UTC(),
 		LayoutHeader: domain.LayoutHeader{BlobStorage: domain.LayoutTarget},
@@ -181,8 +185,9 @@ func TestIndex_BrokenVFSMeta_RollsBackMainWrite(t *testing.T) {
 	bad := json.RawMessage(`{"vfsmeta":{"version":1,"path":12345}}`)
 	m := domain.Manifest{
 		ArtifactID:   "art-bad",
-		BlobRefs:     []domain.BlobRef{"sha256-bad"},
-		ContentHash:  "sha256-bad",
+		Digest:       domain.ManifestDigest(fxKey("art-bad")),
+		BlobRefs:     []domain.BlobRef{"bad00000"},
+		ContentHash:  "bad00000",
 		OriginalSize: 10,
 		CreatedAt:    time.Now().UTC(),
 		LayoutHeader: domain.LayoutHeader{BlobStorage: domain.LayoutTarget},
@@ -521,3 +526,7 @@ func TestReadAPI_NotRegistered_Errs(t *testing.T) {
 		t.Error("WalkAll on un-registered index returned nil; want error")
 	}
 }
+
+// fxKey derives a bare-hex key from a fixture id (ADR-93: refs and digests
+// carry no algorithm prefix, and the index stores them as raw bytes).
+func fxKey(id domain.ArtifactID) string { return hex.EncodeToString([]byte(id)) }

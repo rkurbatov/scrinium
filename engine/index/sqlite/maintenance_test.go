@@ -25,11 +25,11 @@ import (
 func TestWriteCheckpoint_CreatesCheckpoint(t *testing.T) {
 	idx, _ := newDiskIndex(t)
 	// Seed some data so the checkpoint is a meaningful copy.
-	insertBlob(t, idx, "blob-1", "sha256-"+strings.Repeat("a", 64), 1024,
+	insertBlob(t, idx, "b10b0001", strings.Repeat("a", 64), 1024,
 		domain.PhysicalAddress{Path: "p"}, 1)
 	insertManifest(t, idx, domain.Manifest{
 		ArtifactID: "art-1",
-		BlobRefs:   []domain.BlobRef{"blob-1"}, CreatedAt: time.Now(),
+		BlobRefs:   []domain.BlobRef{"b10b0001"}, CreatedAt: time.Now(),
 	})
 
 	dest := filepath.Join(t.TempDir(), "snap.db")
@@ -105,11 +105,11 @@ func TestWriteCheckpoint_CreatesParentDir(t *testing.T) {
 func TestRestoreCheckpoint_RoundTrip(t *testing.T) {
 	// Seed a source index, checkpoint it, restore into a fresh target.
 	src, _ := newDiskIndex(t)
-	insertBlob(t, src, "blob-1", "sha256-"+strings.Repeat("a", 64), 1024,
+	insertBlob(t, src, "b10b0001", strings.Repeat("a", 64), 1024,
 		domain.PhysicalAddress{Path: "p"}, 1)
 	insertManifest(t, src, domain.Manifest{
 		ArtifactID: "art-1",
-		BlobRefs:   []domain.BlobRef{"blob-1"}, CreatedAt: time.Now(),
+		BlobRefs:   []domain.BlobRef{"b10b0001"}, CreatedAt: time.Now(),
 	})
 
 	cp := filepath.Join(t.TempDir(), "cp.db")
@@ -137,7 +137,7 @@ func TestRestoreCheckpoint_RoundTrip(t *testing.T) {
 
 func TestRestoreCheckpoint_Idempotent(t *testing.T) {
 	src, _ := newDiskIndex(t)
-	insertBlob(t, src, "blob-1", "sha256-"+strings.Repeat("b", 64), 512,
+	insertBlob(t, src, "b10b0001", strings.Repeat("b", 64), 512,
 		domain.PhysicalAddress{Path: "p"}, 1)
 	cp := filepath.Join(t.TempDir(), "cp.db")
 	if err := src.WriteCheckpoint(context.Background(), cp); err != nil {

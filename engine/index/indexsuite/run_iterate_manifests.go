@@ -23,9 +23,9 @@ func runIterateManifests(t *testing.T, f Factory) {
 			id, ref  string
 			fillChar byte
 		}{
-			{"a1", "blob-a1", 'a'},
-			{"a2", "blob-a2", 'b'},
-			{"b1", "blob-b1", 'c'},
+			{"a1", "b10b00a1", 'a'},
+			{"a2", "b10b00a2", 'b'},
+			{"b1", "b10b00b1", 'c'},
 		}
 		for _, s := range stage {
 			m := manifestfx.BlobWithHash(s.id, s.ref, manifestfx.SyntheticHash(s.fillChar), 1024)

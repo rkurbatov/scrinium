@@ -21,7 +21,7 @@ import (
 func setCSN(t *testing.T, idx *Index, digest string, csn int64) {
 	t.Helper()
 	res, err := idx.db.ExecContext(context.Background(),
-		`UPDATE manifests SET csn = ? WHERE manifest_digest = ?`, csn, digest)
+		`UPDATE manifests SET csn = ? WHERE manifest_digest = ?`, csn, hexKey(digest))
 	if err != nil {
 		t.Fatalf("setCSN: %v", err)
 	}
@@ -47,9 +47,9 @@ func TestListDuplicateHandles_CleanIndex(t *testing.T) {
 func TestListDuplicateHandles_ReportsDuplicate(t *testing.T) {
 	idx, _ := newDiskIndex(t)
 	insertManifest(t, idx, domain.Manifest{
-		ArtifactID: "art-dup", Digest: domain.ManifestDigest("sha256-" + rep("1")), CreatedAt: time.Now()})
+		ArtifactID: "art-dup", Digest: domain.ManifestDigest(rep("1")), CreatedAt: time.Now()})
 	insertManifest(t, idx, domain.Manifest{
-		ArtifactID: "art-dup", Digest: domain.ManifestDigest("sha256-" + rep("2")), CreatedAt: time.Now()})
+		ArtifactID: "art-dup", Digest: domain.ManifestDigest(rep("2")), CreatedAt: time.Now()})
 	insertManifest(t, idx, domain.Manifest{
 		ArtifactID: "art-solo", CreatedAt: time.Now()})
 
@@ -68,9 +68,9 @@ func TestListDuplicateHandles_ReportsDuplicate(t *testing.T) {
 func TestListDuplicateHandles_IgnoresHeadless(t *testing.T) {
 	idx, _ := newDiskIndex(t)
 	insertManifest(t, idx, domain.Manifest{
-		ArtifactID: "", Digest: domain.ManifestDigest("sha256-" + rep("3")), CreatedAt: time.Now()})
+		ArtifactID: "", Digest: domain.ManifestDigest(rep("3")), CreatedAt: time.Now()})
 	insertManifest(t, idx, domain.Manifest{
-		ArtifactID: "", Digest: domain.ManifestDigest("sha256-" + rep("4")), CreatedAt: time.Now()})
+		ArtifactID: "", Digest: domain.ManifestDigest(rep("4")), CreatedAt: time.Now()})
 
 	dups, err := idx.ListDuplicateHandles(context.Background())
 	if err != nil {
@@ -86,8 +86,8 @@ func TestListDuplicateHandles_IgnoresHeadless(t *testing.T) {
 // with the highest csn — the freshest form — resolves, deterministically.
 func TestResolveManifestDigest_FreshestFormWins(t *testing.T) {
 	idx, _ := newDiskIndex(t)
-	oldDigest := "sha256-" + rep("a")
-	newDigest := "sha256-" + rep("b")
+	oldDigest := rep("a")
+	newDigest := rep("b")
 	insertManifest(t, idx, domain.Manifest{
 		ArtifactID: "art-move", Digest: domain.ManifestDigest(oldDigest), CreatedAt: time.Now()})
 	insertManifest(t, idx, domain.Manifest{
@@ -107,7 +107,8 @@ func TestResolveManifestDigest_FreshestFormWins(t *testing.T) {
 	}
 }
 
-// rep builds a 64-char pseudo-hex digest tail from one character.
+// rep builds a 64-char bare-hex digest from one hex character (ADR-93:
+// digests carry no algorithm prefix, and the index stores them as raw bytes).
 func rep(c string) string {
 	out := ""
 	for i := 0; i < 64; i++ {

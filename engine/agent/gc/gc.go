@@ -230,8 +230,9 @@ func gcStatsMap(s GCStats) map[string]int64 {
 
 // runCycle executes one Mark+Sweep pass — no lifecycle; agent.RunLeased
 // (ADR-94) owns lease/events/state. Mark tombstones every ref_count=0
-// blob; Sweep removes tombstone files whose grace period has elapsed and
-// drops their index rows.
+// blob; media reconciliation tombstones blob files the index has never
+// heard of (ADR-118, media_reconcile.go); Sweep removes tombstone files
+// whose grace period has elapsed and drops their index rows.
 func (a *gcAgent) runCycle(ctx context.Context) (GCStats, error) {
 	if err := ctx.Err(); err != nil {
 		return GCStats{}, err
@@ -240,9 +241,12 @@ func (a *gcAgent) runCycle(ctx context.Context) (GCStats, error) {
 	grace := a.store.Config().TombstoneGracePeriod
 
 	markErr := a.mark(ctx, &stats)
+	// Media reconciliation runs between Mark and Sweep so a file it marks
+	// waits out the same grace period as everything else (ADR-118).
+	mediaErr := a.reconcileMedia(ctx, &stats)
 	sweepErr := a.sweep(ctx, grace, &stats)
 
-	if err := agent.FirstNonCtxErr(markErr, sweepErr); err != nil {
+	if err := agent.FirstNonCtxErr(markErr, mediaErr, sweepErr); err != nil {
 		return stats, fmt.Errorf("gc.GC.RunNow: %w", err)
 	}
 	return stats, nil

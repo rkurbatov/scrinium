@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -238,7 +237,11 @@ func newEncryptedDiskStore(t *testing.T, crypto config.ManifestCrypto) (store.St
 	t.Helper()
 	drv := driverfx.LocalFS(t)
 	root := drv.Root()
-	idx := indexfx.Disk(t, filepath.Join(t.TempDir(), "store.idx"))
+	// Paranoid forbids an index that persists readable on disk (ADR-56), so
+	// the only admissible one is ephemeral. That is not a smoke-test
+	// concession: it is the single combination the mode actually runs in,
+	// which makes this the right thing to be measuring (ADR-119).
+	idx := indexfx.Memory(t)
 
 	// storefx.InitOn does not expose a "with passphrase + crypto"
 	// variant, and we don't need it elsewhere — wire InitStore
@@ -276,6 +279,11 @@ func newEncryptedDiskStore(t *testing.T, crypto config.ManifestCrypto) (store.St
 // artifact but cumulatively meaningful at 1M scale; 10k is
 // enough to demonstrate stability and catch per-artifact key-
 // material accumulation.
+//
+// The index here is in-memory, which is what Paranoid requires: an index
+// readable on disk would hold in the clear the very fields the mode
+// encrypts (ADR-56/119). The memory cost of that choice is the mode's own
+// (≈1.7 KB per artifact), so this smoke also stands as its measurement.
 //
 // Uses Paranoid mode rather than Sealed. Paranoid is the
 // more demanding of the two (entire body encrypted, IV-driven

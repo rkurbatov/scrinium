@@ -12,7 +12,7 @@ func runDeleteManifest(t *testing.T, f Factory) {
 	t.Run("Blob_DropsRefCount", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		m := manifestfx.Blob("art-1", "blob-1")
+		m := manifestfx.Blob("art-1", "b10b0001")
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
@@ -28,7 +28,7 @@ func runDeleteManifest(t *testing.T, f Factory) {
 		}
 		// Blob row remains as orphan with ref_count = 0 — the GC
 		// state, not "missing".
-		n, err := idx.GetRefCount(ctx, "blob-1")
+		n, err := idx.GetRefCount(ctx, "b10b0001")
 		if err != nil {
 			t.Fatalf("blob row gone (got %v); orphans must persist for GC", err)
 		}
@@ -40,7 +40,7 @@ func runDeleteManifest(t *testing.T, f Factory) {
 	t.Run("Idempotent", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		if err := idx.DeleteManifest(ctx, "nonexistent-digest"); err != nil {
+		if err := idx.DeleteManifest(ctx, "0d0d0d0d"); err != nil {
 			t.Errorf("delete of unknown digest must be no-op, got %v", err)
 		}
 	})

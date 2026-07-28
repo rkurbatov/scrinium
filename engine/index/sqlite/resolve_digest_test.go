@@ -15,8 +15,8 @@ func TestResolveManifestDigest_Hit(t *testing.T) {
 	ctx := t.Context()
 	idx := newMemoryIndex(t)
 
-	handle := domain.ArtifactID("sha256-" + strings.Repeat("a", 64))
-	digest := domain.ManifestDigest("sha256-" + strings.Repeat("b", 64))
+	handle := domain.ArtifactID(strings.Repeat("a", 64))
+	digest := domain.ManifestDigest(strings.Repeat("b", 64))
 	m := domain.Manifest{
 		ArtifactID:   handle,
 		Digest:       digest,
@@ -45,7 +45,7 @@ func TestResolveManifestDigest_Miss(t *testing.T) {
 	ctx := t.Context()
 	idx := newMemoryIndex(t)
 
-	got, found, err := idx.ResolveManifestDigest(ctx, domain.ArtifactID("sha256-"+strings.Repeat("c", 64)))
+	got, found, err := idx.ResolveManifestDigest(ctx, domain.ArtifactID(strings.Repeat("c", 64)))
 	if err != nil {
 		t.Fatalf("ResolveManifestDigest: %v", err)
 	}

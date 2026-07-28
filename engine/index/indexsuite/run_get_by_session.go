@@ -17,9 +17,9 @@ func runGetBySession(t *testing.T, f Factory) {
 			id, ref, sess string
 			fillChar      byte
 		}{
-			{"a1", "blob-a1", "sess-1", 'a'},
-			{"a2", "blob-a2", "sess-1", 'b'},
-			{"b1", "blob-b1", "sess-2", 'c'},
+			{"a1", "b10b00a1", "sess-1", 'a'},
+			{"a2", "b10b00a2", "sess-1", 'b'},
+			{"b1", "b10b00b1", "sess-2", 'c'},
 		}
 		for _, s := range stage {
 			m := manifestfx.BlobWithHash(s.id, s.ref, manifestfx.SyntheticHash(s.fillChar), 1024)
@@ -48,7 +48,7 @@ func runGetBySession(t *testing.T, f Factory) {
 	t.Run("Miss", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		ids, err := idx.GetBySession(ctx, "nonexistent")
+		ids, err := idx.GetBySession(ctx, "0e0e0e0e")
 		if err != nil {
 			t.Fatalf("GetBySession: %v", err)
 		}

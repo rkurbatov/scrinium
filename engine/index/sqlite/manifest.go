@@ -105,7 +105,7 @@ func (i *Index) indexManifestTx(
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE manifests SET csn = ? WHERE manifest_digest = ?`,
-			c, string(m.Digest),
+			c, hexKey(m.Digest),
 		); err != nil {
 			return fmt.Errorf("sqlite: stamp csn: %w", err)
 		}
@@ -152,9 +152,10 @@ func insertManifestRow(ctx context.Context, tx *sql.Tx, m domain.Manifest) error
 	// of a JOIN partner as the "this is inline, read the file" signal.
 	// It is a transitional single-blob cache; the authoritative blob
 	// list is manifest_blobs (ADR-92).
-	var blobRefArg any
+	// hexKey("") binds as NULL, which is exactly the Inline case.
+	var blobRefArg hexKey
 	if m.LayoutHeader.BlobStorage != domain.LayoutInline && len(m.BlobRefs) > 0 {
-		blobRefArg = string(m.BlobRefs[0])
+		blobRefArg = hexKey(m.BlobRefs[0])
 	}
 
 	// retention_until is NULL when no retention was set. Stored alongside
@@ -172,7 +173,7 @@ func insertManifestRow(ctx context.Context, tx *sql.Tx, m domain.Manifest) error
 	}
 
 	_, err := tx.ExecContext(ctx, stmt,
-		string(m.Digest),
+		hexKey(m.Digest),
 		artifactIDArg,
 		m.SessionID,
 		blobRefArg,
@@ -203,8 +204,9 @@ func linkManifestToHandle(
 		INSERT INTO manifest_handles (manifest_digest, handle_ref, position)
 		VALUES (?, ?, ?)
 		ON CONFLICT(manifest_digest, position) DO NOTHING`
+	// handle_ref stays text: a handle is "<algo>-<hex>", not bare hex.
 	_, err := tx.ExecContext(ctx, stmt,
-		string(digest), string(handleRef), position,
+		hexKey(digest), string(handleRef), position,
 	)
 	return err
 }
@@ -264,12 +266,12 @@ func indexBlobManifest(
 	for _, ref := range m.BlobRefs {
 		blobRef := string(ref)
 		if _, err := insBlob.ExecContext(ctx,
-			blobRef, string(m.ContentHash), m.OriginalSize,
+			hexKey(blobRef), hexKey(m.ContentHash), m.OriginalSize,
 			crypto, addr.Path, now,
 		); err != nil {
 			return err
 		}
-		res, err := bumpRC.ExecContext(ctx, blobRef)
+		res, err := bumpRC.ExecContext(ctx, hexKey(blobRef))
 		if err != nil {
 			return err
 		}
@@ -294,9 +296,9 @@ func indexBlobManifest(
 		return err
 	}
 	defer linkBlob.Close()
-	dg := string(m.Digest)
+	dg := hexKey(m.Digest)
 	for pos, ref := range m.BlobRefs {
-		if _, err := linkBlob.ExecContext(ctx, dg, string(ref), pos); err != nil {
+		if _, err := linkBlob.ExecContext(ctx, dg, hexKey(ref), pos); err != nil {
 			return err
 		}
 	}
@@ -332,7 +334,7 @@ func (i *Index) deleteManifestTx(ctx context.Context, digest domain.ManifestDige
 		// Existence + artifact_id (for the deletion event). A missing
 		// row means the manifest is already gone: no-op. artifact_id is
 		// NULL for headless containers — COALESCE to "".
-		dg := string(digest)
+		dg := hexKey(digest)
 		var artifactID string
 		err := tx.QueryRowContext(ctx,
 			`SELECT COALESCE(artifact_id, '') FROM manifests WHERE manifest_digest = ? LIMIT 1`,
@@ -357,7 +359,7 @@ func (i *Index) deleteManifestTx(ctx context.Context, digest domain.ManifestDige
 		var actual []string
 		for rows.Next() {
 			var ref string
-			if err := rows.Scan(&ref); err != nil {
+			if err := rows.Scan(hexOut{dst: &ref}); err != nil {
 				return err
 			}
 			actual = append(actual, ref)
@@ -373,7 +375,7 @@ func (i *Index) deleteManifestTx(ctx context.Context, digest domain.ManifestDige
 		}
 		defer decRC.Close()
 		for _, ref := range actual {
-			if _, err := decRC.ExecContext(ctx, ref); err != nil {
+			if _, err := decRC.ExecContext(ctx, hexKey(ref)); err != nil {
 				return err
 			}
 		}
@@ -454,7 +456,7 @@ func (i *Index) deleteManifestTx(ctx context.Context, digest domain.ManifestDige
 func (i *Index) ResolveManifestDigest(ctx context.Context, id domain.ArtifactID) (domain.ManifestDigest, bool, error) {
 	const stmt = `SELECT manifest_digest FROM manifests WHERE artifact_id = ? ORDER BY csn DESC LIMIT 1`
 	var d string
-	err := i.db.QueryRowContext(ctx, stmt, string(id)).Scan(&d)
+	err := i.db.QueryRowContext(ctx, stmt, string(id)).Scan(hexOut{dst: &d})
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return "", false, nil
@@ -498,7 +500,7 @@ func (i *Index) ListDuplicateHandles(ctx context.Context) ([]domain.ArtifactID, 
 func (i *Index) ManifestExistsByDigest(ctx context.Context, digest domain.ManifestDigest) (bool, error) {
 	const stmt = `SELECT 1 FROM manifests WHERE manifest_digest = ? LIMIT 1`
 	var one int
-	err := i.db.QueryRowContext(ctx, stmt, string(digest)).Scan(&one)
+	err := i.db.QueryRowContext(ctx, stmt, hexKey(digest)).Scan(&one)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return false, nil

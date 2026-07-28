@@ -66,3 +66,16 @@ func (s *store) SetMaintenanceMode(ctx context.Context, mode domain.MaintenanceM
 // System returns the systemstore.Store facade. Reached only through
 // AdminStore, so DataStore consumers cannot see system state.
 func (s *store) System() systemstore.Store { return s.system }
+
+// IndexComplete reports whether the index has been established, in this
+// session, as a complete picture of the manifests on the Location (ADR-118).
+//
+// It is not on the Store facade on purpose: the only callers are the passes
+// that delete by absence — the GC agent's media reconciliation — and for
+// them "the index does not know this" is only evidence once completeness is
+// proven. Everyone else has no business asking.
+func (s *store) IndexComplete() bool {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.indexComplete
+}

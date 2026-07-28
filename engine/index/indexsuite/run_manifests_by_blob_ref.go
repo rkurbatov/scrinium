@@ -19,19 +19,19 @@ func runManifestsByBlobRef(t *testing.T, f Factory) {
 		// idempotent on the blobs row (ON CONFLICT DO NOTHING) and adds
 		// a manifest_blobs edge per artifact.
 		for _, id := range []string{"art-a", "art-b"} {
-			m := manifestfx.Blob(id, "blob-shared")
+			m := manifestfx.Blob(id, "b10b5ded")
 			if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p")); err != nil {
 				t.Fatalf("IndexManifest %s: %v", id, err)
 			}
 		}
 		// A third artifact on a different blob must NOT be returned.
-		other := manifestfx.Blob("art-c", "blob-other")
+		other := manifestfx.Blob("art-c", "b10b0aef")
 		if err := idx.IndexManifest(ctx, other, manifestfx.PhysAddr("p")); err != nil {
 			t.Fatalf("IndexManifest art-c: %v", err)
 		}
 
 		var got []string
-		err := idx.ManifestsByBlobRef(ctx, "blob-shared", func(m domain.Manifest) error {
+		err := idx.ManifestsByBlobRef(ctx, "b10b5ded", func(m domain.Manifest) error {
 			got = append(got, string(m.ArtifactID))
 			return nil
 		})
@@ -48,13 +48,13 @@ func runManifestsByBlobRef(t *testing.T, f Factory) {
 		ctx := t.Context()
 		idx := f.New(t)
 		want := manifestfx.SyntheticHash('c')
-		m := manifestfx.BlobWithHash("art-1", "blob-1", want, 2048)
+		m := manifestfx.BlobWithHash("art-1", "b10b0001", want, 2048)
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
 		var seen domain.Manifest
 		var n int
-		err := idx.ManifestsByBlobRef(ctx, "blob-1", func(m domain.Manifest) error {
+		err := idx.ManifestsByBlobRef(ctx, "b10b0001", func(m domain.Manifest) error {
 			seen = m
 			n++
 			return nil
@@ -77,7 +77,7 @@ func runManifestsByBlobRef(t *testing.T, f Factory) {
 		ctx := t.Context()
 		idx := f.New(t)
 		var n int
-		err := idx.ManifestsByBlobRef(ctx, "no-such-blob", func(domain.Manifest) error {
+		err := idx.ManifestsByBlobRef(ctx, "0b5e0000", func(domain.Manifest) error {
 			n++
 			return nil
 		})

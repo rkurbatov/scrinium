@@ -94,6 +94,15 @@ type Store interface {
 	// alphabetical order, yielding the active manifest for each — both
 	// versioned actives and keep=0 cells (e.g. the lease).
 	Walk(ctx context.Context, prefix string, cb func(name string, m domain.Manifest) error) error
+
+	// PointerRef returns the external payload reference of a pointer
+	// artifact (ADR-105) without opening the payload. It exists for index
+	// recovery (ADR-118): restoring a checkpoint has to reach the payload
+	// WITHOUT the index, and Get resolves it through the data plane, which
+	// asks the index for the blob address. The caller opens the payload its
+	// own way. Returns ok=false for a name whose envelope carries an inline
+	// payload instead.
+	PointerRef(ctx context.Context, name string) (ref domain.ManifestDigest, ok bool, err error)
 }
 
 // systemStore is the Store facade over the pointer-free layout (ADR-85,
@@ -284,6 +293,20 @@ func (ss *systemStore) Get(ctx context.Context, name string) (domain.ReadHandle,
 		return ss.external.OpenExternal(ctx, domain.ManifestDigest(env.ExternalPayloadRef))
 	}
 	return cas.NewInlinePayloadHandle(m, env.InlinePayload), nil
+}
+
+// PointerRef reads the envelope and reports its external payload reference,
+// leaving the payload untouched. See the interface for why this exists apart
+// from Get.
+func (ss *systemStore) PointerRef(ctx context.Context, name string) (domain.ManifestDigest, bool, error) {
+	env, _, err := ss.loadEnvelope(ctx, name)
+	if err != nil {
+		return "", false, err
+	}
+	if env.ExternalPayloadRef == "" {
+		return "", false, nil
+	}
+	return domain.ManifestDigest(env.ExternalPayloadRef), true, nil
 }
 
 // loadEnvelope resolves a name to its active manifest (a versioned active or a

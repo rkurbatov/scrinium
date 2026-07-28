@@ -20,6 +20,7 @@ import (
 	"scrinium.dev/engine/store/internal/orphanscan"
 	"scrinium.dev/engine/store/internal/reconcile"
 	"scrinium.dev/engine/systemstore"
+	"scrinium.dev/errs"
 	"scrinium.dev/event"
 )
 
@@ -46,6 +47,9 @@ func buildStore(
 		hashes:       o.hashRegistry,
 		transformers: o.readRegistry,
 		crypto:       crypto.New(desc, dek, o.passphrase, o.keyResolver, drv),
+
+		recoverIndex:  o.recoverIndex,
+		allowRecovery: o.allowRecovery,
 	}
 	// Derive the hot "store"-component logger once; componentLogger("store")
 	// returns this rather than allocating a With wrapper on every call.
@@ -89,10 +93,17 @@ func buildStore(
 const orphanScanCursorName = "store.agent.orphanscan.last"
 
 func unlockBootstrap(ctx context.Context, c *store, pub event.Publisher) error {
-	report, err := orphanscan.RecoverOrphans(ctx, c.drv, c.index)
+	// The pass is safe to run over any index (ADR-118): it deletes nothing on
+	// the index's word — only staging leftovers and manifest fragments that
+	// fail their own hash — and it reads every manifest the index does not
+	// know back into it. So it is not gated on completeness; it ESTABLISHES
+	// completeness, which is what the GC agent and the media reconciliation
+	// later depend on.
+	report, err := orphanscan.Reconcile(ctx, c.drv, c.index, c)
 	if err != nil {
-		return fmt.Errorf("orphan scan: %w", err)
+		return fmt.Errorf("reconcile: %w", err)
 	}
+	c.markIndexComplete()
 	// Record the scan timestamp as a cursor system artifact (ADR-104 §6) so it
 	// survives an index rebuild. Cold path (one write per open), so it is read
 	// straight from the artifact when needed — no in-memory cache (S-19).
@@ -135,4 +146,74 @@ func healReplicas(ctx context.Context, drv driver.Driver, hashes domain.HashRegi
 	default:
 		return fmt.Errorf("core: unknown ReconcileAction %d", int(action))
 	}
+}
+
+// guardIndexAtRest refuses a crypto mode whose promise the index cannot
+// keep (ADR-56, INV-56-1). Paranoid encrypts the whole manifest body so
+// nothing about the store is readable on disk; an index that persists in
+// the clear holds the same fields and defeats the mode entirely. The check
+// is on the index's declared at-rest profile, not on its type, so a future
+// encrypted backend passes without touching this code. An index that does
+// not report is treated as plaintext: an unknown backend refuses rather
+// than permits.
+func guardIndexAtRest(crypto config.ManifestCrypto, idx index.StoreIndex) error {
+	if crypto != config.ManifestCryptoParanoid {
+		return nil
+	}
+	profile := index.AtRestPlaintext
+	if r, ok := idx.(index.AtRestReporter); ok {
+		profile = r.AtRest()
+	}
+	if profile == index.AtRestPlaintext {
+		return fmt.Errorf("%w: ManifestCrypto=%q requires an encrypted or ephemeral index; "+
+			"this index persists readable on disk (use an in-memory index, see ADR-56)",
+			errs.ErrUnsupportedCombination, crypto)
+	}
+	return nil
+}
+
+// settleIndex carries out the plan planIndexOpen produced (ADR-118): run the
+// recovery procedure when one is needed, then record — for this session only
+// — that the index knows the whole manifest set. Everything downstream that
+// may delete by absence hangs off that flag.
+func settleIndex(ctx context.Context, c *store, plan indexPlan) error {
+	if plan.err != nil {
+		return plan.err
+	}
+	if plan.recover && c.recoverIndex != nil {
+		// Fast path: restore the latest checkpoint and read in the tail.
+		if err := c.recoverIndex.RecoverIndex(ctx); err != nil {
+			return fmt.Errorf("recover index: %w", err)
+		}
+		c.markIndexComplete()
+		return nil
+	}
+	if plan.recover {
+		// Built-in fast half: restore the newest checkpoint, if there is one
+		// and the backend can take it. The reconciliation that follows then
+		// finds almost everything already known and only reads the tail.
+		// A failure here costs speed, not correctness — the pass does the
+		// whole job by itself — so it is logged and swallowed.
+		used, err := restoreIndexFromCheckpoint(ctx, c)
+		if err != nil {
+			c.componentLogger("store").LogAttrs(ctx, slog.LevelWarn,
+				"checkpoint restore skipped", slog.String("reason", err.Error()))
+		} else if used {
+			c.componentLogger("store").LogAttrs(ctx, slog.LevelInfo,
+				"index restored from checkpoint")
+		}
+		// Completeness is established by the pass that follows, not here.
+		return nil
+	}
+	c.markIndexComplete()
+	return nil
+}
+
+// markIndexComplete records that the index is known to hold the whole
+// manifest set for this session (ADR-118). Everything that may delete by
+// absence — the GC agent, the media reconciliation — hangs off this.
+func (c *store) markIndexComplete() {
+	c.stateMu.Lock()
+	c.indexComplete = true
+	c.stateMu.Unlock()
 }

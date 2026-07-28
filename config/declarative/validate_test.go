@@ -48,7 +48,7 @@ func TestValidateRoutingUnknownStore(t *testing.T) {
 	wantErr(t, &Config{
 		Stores: map[string]*StoreSpec{"hot": {Driver: "file:///d"}},
 		Multistore: &MultistoreSpec{
-			Routing: map[string]string{"*": "nonexistent"},
+			Routing: map[string]string{"*": "0e0e0e0e"},
 		},
 	}, "unknown store")
 }

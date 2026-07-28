@@ -10,9 +10,9 @@ import (
 
 	"scrinium.dev/domain"
 	"scrinium.dev/engine/agent"
-	"scrinium.dev/engine/agent/internal/checkpointfmt"
 	"scrinium.dev/engine/driver"
 	"scrinium.dev/engine/index"
+	"scrinium.dev/engine/internal/checkpointfmt"
 	"scrinium.dev/engine/lease"
 	"scrinium.dev/engine/store"
 	"scrinium.dev/engine/systemstore"

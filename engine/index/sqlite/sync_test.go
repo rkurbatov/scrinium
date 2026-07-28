@@ -24,13 +24,13 @@ func TestSync_TokenMonotonic(t *testing.T) {
 		t.Errorf("fresh Token = %d, want 0", t0)
 	}
 
-	m := manifestfx.Blob("art-1", "blob-1")
+	m := manifestfx.Blob("art-1", "b10b0001")
 	if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 		t.Fatalf("IndexManifest #1: %v", err)
 	}
 	t1, _ := idx.Token(ctx)
 
-	if err := idx.IndexManifest(ctx, manifestfx.Blob("art-2", "blob-2"),
+	if err := idx.IndexManifest(ctx, manifestfx.Blob("art-2", "b10b0002"),
 		manifestfx.PhysAddr("blobs/cc/dd/blob-2")); err != nil {
 		t.Fatalf("IndexManifest #2: %v", err)
 	}
@@ -53,8 +53,8 @@ func TestSync_SinceReturnsChangesInOrder(t *testing.T) {
 	idx := newMemoryIndex(t)
 	ctx := context.Background()
 
-	m1 := manifestfx.Blob("art-1", "blob-1")
-	m2 := manifestfx.Blob("art-2", "blob-2")
+	m1 := manifestfx.Blob("art-1", "b10b0001")
+	m2 := manifestfx.Blob("art-2", "b10b0002")
 	if err := idx.IndexManifest(ctx, m1, manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 		t.Fatal(err)
 	}
@@ -103,8 +103,8 @@ func TestSync_SinceFiltersDeletedAndFlagsGap(t *testing.T) {
 	idx := newMemoryIndex(t)
 	ctx := context.Background()
 
-	m1 := manifestfx.Blob("art-1", "blob-1")
-	m2 := manifestfx.Blob("art-2", "blob-2")
+	m1 := manifestfx.Blob("art-1", "b10b0001")
+	m2 := manifestfx.Blob("art-2", "b10b0002")
 	if err := idx.IndexManifest(ctx, m1, manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestSync_WaitFastPath(t *testing.T) {
 	idx := newMemoryIndex(t)
 	ctx := context.Background()
 
-	if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "blob-1"),
+	if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "b10b0001"),
 		manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 		t.Fatalf("IndexManifest: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestSync_WaitWakesOnChange(t *testing.T) {
 
 	// Let the waiter enter its poll loop, then write.
 	time.Sleep(20 * time.Millisecond)
-	if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "blob-1"),
+	if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "b10b0001"),
 		manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 		t.Fatalf("IndexManifest: %v", err)
 	}

@@ -45,7 +45,7 @@ func insertBlob(t *testing.T, idx *Index, ref, contentHash string, size int64, a
 			crypto_identity, physical_path,
 			ref_count, last_verified_at, created_at
 		) VALUES (?, ?, ?, '', ?, ?, NULL, ?)`,
-		ref, contentHash, size, addr.Path,
+		hexKey(ref), hexKey(contentHash), size, addr.Path,
 		refCount, timefmt.Format(time.Now()),
 	)
 	if err != nil {
@@ -66,11 +66,9 @@ func insertManifest(t *testing.T, idx *Index, m domain.Manifest) {
 	// blob_ref is NULL for Inline manifests (§9.1.2). The list
 	// helpers in tests rarely set LayoutHeader, so the common
 	// path is non-NULL — but we honour the invariant either way.
-	var blobRefArg any
-	if m.LayoutHeader.BlobStorage == domain.LayoutInline {
-		blobRefArg = nil
-	} else {
-		blobRefArg = string(m.PrimaryBlobRef())
+	var blobRefArg hexKey // empty binds as NULL
+	if m.LayoutHeader.BlobStorage != domain.LayoutInline {
+		blobRefArg = hexKey(m.PrimaryBlobRef())
 	}
 	var retentionArg any
 	if !m.RetentionUntil.IsZero() {
@@ -82,15 +80,17 @@ func insertManifest(t *testing.T, idx *Index, m domain.Manifest) {
 	// never collide on an empty PK.
 	digest := string(m.Digest)
 	if digest == "" {
+		// A digest is bare hex (ADR-93) — no algorithm prefix, or the
+		// binary key column could not hold it.
 		sum := sha256.Sum256([]byte(string(m.ArtifactID) + "|" + string(m.SessionID) + "|" + timefmt.Format(createdAt)))
-		digest = "sha256-" + hex.EncodeToString(sum[:])
+		digest = hex.EncodeToString(sum[:])
 	}
 	_, err := idx.db.ExecContext(context.Background(),
 		`INSERT INTO manifests (
 			manifest_digest, artifact_id, session_id,
 			blob_ref, created_at, retention_until
 		) VALUES (?, ?, ?, ?, ?, ?)`,
-		digest, string(m.ArtifactID),
+		hexKey(digest), string(m.ArtifactID),
 		m.SessionID, blobRefArg,
 		timefmt.Format(createdAt), retentionArg,
 	)

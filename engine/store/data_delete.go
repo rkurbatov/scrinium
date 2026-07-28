@@ -31,13 +31,16 @@ import (
 //  1. Load manifest.
 //  2. Retention check — defends the artifact regardless of Store policy.
 //  3. DeletionPolicy check — Store-level toggle.
-//  4. StoreIndex.DeleteManifest — one transaction: decrement blob
+//  4. Driver.Remove(manifestPath) — the truth on disk stops saying "exists".
+//  5. StoreIndex.DeleteManifest — one transaction: decrement blob
 //     ref_counts and remove the manifest row.
-//  5. Driver.Remove(manifestPath).
 //  6. EventArtifactDeleted — only after everything succeeded.
 //
-// A crash between (4) and (5) leaves an on-disk manifest with no index
-// row; rebuilding the index from manifests is the recovery path.
+// A crash between (4) and (5) leaves an index row without its manifest
+// file: a stale cache entry, dropped by the open-time reconciliation
+// (ADR-118). The reverse order would leave the file without a row, which
+// that same reconciliation would read back in — resurrecting a deleted
+// artifact. Truth first, cache second.
 func (s *store) Delete(ctx context.Context, id domain.ArtifactID) error {
 	if err := s.enterWrite(ctx); err != nil {
 		return err
@@ -65,27 +68,31 @@ func (s *store) Delete(ctx context.Context, id domain.ArtifactID) error {
 		return errs.ErrDeletionForbidden
 	}
 
-	// Idempotent at this layer: a re-issued Delete after a crash between
-	// index COMMIT and Driver.Remove would not reach here, because
-	// loadManifest above would already have returned ErrArtifactNotFound
-	// (the manifest file is gone). The "manifest present, index row
-	// absent" window is recovered by an index rebuild. Deletion is keyed
-	// by digest; the index derives the blobs to decrement from
-	// manifest_blobs (Inline has no edges; Target has its one blob).
-	if err := s.index.DeleteManifest(ctx, manifest.Digest); err != nil {
-		return s.traceErr(ctx, "Delete", fmt.Errorf("store.Delete: index: %w", err), artifactIDAttr(id), slog.String("stage", "index"))
-	}
-
+	// File first, index second (ADR-30 as revised by ADR-118). The manifest
+	// on disk is the truth and the index is a cache of it, so the crash
+	// window must never leave truth saying "present" while the cache says
+	// "deleted": the open-time reconciliation reads an unknown manifest back
+	// INTO the index, which would resurrect a deleted artifact. Removing the
+	// file first inverts the leftover — a row without a file, i.e. a stale
+	// cache entry, which the same reconciliation drops. The cost of a crash
+	// in this window is inflated ref_counts (blobs reclaimed later, by the
+	// media reconciliation) — a leak instead of a resurrection.
 	manifestPath, err := layout.ManifestPath(manifest.Digest)
 	if err != nil {
 		return fmt.Errorf("store.Delete: manifest path: %w", err)
 	}
 	if err := s.drv.Remove(ctx, manifestPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		// The index row is already gone, so the manifest file is now an
-		// orphan that the GC Orphan Scan reaps on its next sweep. We still
-		// surface the Remove error so the caller knows the operation was
-		// not fully clean.
+		// Nothing has changed yet: the row still stands and the artifact is
+		// still readable. Surfacing the error leaves a consistent store.
 		return s.traceErr(ctx, "Delete", fmt.Errorf("store.Delete: remove manifest file: %w", err), artifactIDAttr(id), slog.String("stage", "remove"))
+	}
+
+	// Deletion is keyed by digest; the index derives the blobs to decrement
+	// from manifest_blobs (Inline has no edges; Target has its one blob).
+	// A failure here leaves a row pointing at a file that is gone — a stale
+	// cache entry, dropped by the reconciliation that follows an open.
+	if err := s.index.DeleteManifest(ctx, manifest.Digest); err != nil {
+		return s.traceErr(ctx, "Delete", fmt.Errorf("store.Delete: index: %w", err), artifactIDAttr(id), slog.String("stage", "index"))
 	}
 
 	s.publish(event.EventArtifactDeleted, event.ArtifactDeletedPayload{ArtifactID: id})

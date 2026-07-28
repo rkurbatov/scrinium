@@ -15,7 +15,7 @@ func runListByExtField(t *testing.T, f Factory) {
 		idx := f.New(t)
 		registerFixture(t, ctx, idx)
 
-		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "blob-1"), manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
+		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "b10b0001"), manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 			t.Fatalf("IndexManifest: %v", err)
 		}
 

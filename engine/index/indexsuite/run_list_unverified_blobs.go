@@ -28,9 +28,9 @@ func runListUnverifiedBlobs(t *testing.T, f Factory) {
 			verifiedAgo  time.Duration
 			everVerified bool
 		}{
-			{"never", "blob-n", 'a', 0, false},
-			{"stale", "blob-s", 'b', 10 * time.Minute, true},
-			{"fresh", "blob-f", 'c', time.Minute, true},
+			{"never", "b10b000e", 'a', 0, false},
+			{"stale", "b10b0055", 'b', 10 * time.Minute, true},
+			{"fresh", "b10b000f", 'c', time.Minute, true},
 		}
 		for _, s := range stage {
 			m := manifestfx.BlobWithHash(s.id, s.ref, manifestfx.SyntheticHash(s.fillChar), 1024)
@@ -60,13 +60,13 @@ func runListUnverifiedBlobs(t *testing.T, f Factory) {
 		for _, ref := range got {
 			seen[ref] = true
 		}
-		if !seen["blob-n"] {
+		if !seen["b10b000e"] {
 			t.Error("expected never-verified blob in result")
 		}
-		if !seen["blob-s"] {
+		if !seen["b10b0055"] {
 			t.Error("expected stale blob in result")
 		}
-		if seen["blob-f"] {
+		if seen["b10b000f"] {
 			t.Error("fresh blob leaked through cutoff")
 		}
 	})
@@ -87,9 +87,9 @@ func runListUnverifiedBlobs(t *testing.T, f Factory) {
 			fillChar    byte
 			verifiedAgo time.Duration
 		}{
-			{"older", "blob-o", 'a', 3 * time.Hour},
-			{"middle", "blob-m", 'b', 2 * time.Hour},
-			{"newer", "blob-n", 'c', time.Hour},
+			{"older", "b10b000f", 'a', 3 * time.Hour},
+			{"middle", "b10b00dd", 'b', 2 * time.Hour},
+			{"newer", "b10b000e", 'c', time.Hour},
 		}
 		for _, s := range stage {
 			m := manifestfx.BlobWithHash(s.id, s.ref, manifestfx.SyntheticHash(s.fillChar), 1024)
@@ -110,7 +110,7 @@ func runListUnverifiedBlobs(t *testing.T, f Factory) {
 		if err != nil {
 			t.Fatalf("ListUnverifiedBlobs: %v", err)
 		}
-		want := []string{"blob-o", "blob-m", "blob-n"}
+		want := []string{"b10b000f", "b10b00dd", "b10b000e"}
 		if len(got) != len(want) {
 			t.Fatalf("got %d, want %d", len(got), len(want))
 		}

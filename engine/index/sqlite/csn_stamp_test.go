@@ -14,7 +14,7 @@ func TestCSN_IndexManifestStamps(t *testing.T) {
 	idx := newMemoryIndex(t)
 	ctx := context.Background()
 
-	m := manifestfx.Blob("art-1", "blob-1")
+	m := manifestfx.Blob("art-1", "b10b0001")
 	if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 		t.Fatalf("IndexManifest: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestCSN_IndexManifestStamps(t *testing.T) {
 
 	var rowCSN uint64
 	if err := idx.db.QueryRowContext(ctx,
-		`SELECT csn FROM manifests WHERE manifest_digest = ?`, string(m.Digest),
+		`SELECT csn FROM manifests WHERE manifest_digest = ?`, hexKey(m.Digest),
 	).Scan(&rowCSN); err != nil {
 		t.Fatalf("read manifests.csn: %v", err)
 	}
@@ -44,11 +44,11 @@ func TestCSN_IndexManifestAdvancesToken(t *testing.T) {
 	idx := newMemoryIndex(t)
 	ctx := context.Background()
 
-	if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "blob-1"),
+	if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "b10b0001"),
 		manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 		t.Fatalf("IndexManifest #1: %v", err)
 	}
-	if err := idx.IndexManifest(ctx, manifestfx.Blob("art-2", "blob-2"),
+	if err := idx.IndexManifest(ctx, manifestfx.Blob("art-2", "b10b0002"),
 		manifestfx.PhysAddr("blobs/cc/dd/blob-2")); err != nil {
 		t.Fatalf("IndexManifest #2: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestCSN_DeleteManifestStampsPrune(t *testing.T) {
 	idx := newMemoryIndex(t)
 	ctx := context.Background()
 
-	m := manifestfx.Blob("art-1", "blob-1")
+	m := manifestfx.Blob("art-1", "b10b0001")
 	if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 		t.Fatalf("IndexManifest: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestCSN_DeleteManifestStampsPrune(t *testing.T) {
 
 	var n int
 	if err := idx.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM manifests WHERE manifest_digest = ?`, string(m.Digest),
+		`SELECT count(*) FROM manifests WHERE manifest_digest = ?`, hexKey(m.Digest),
 	).Scan(&n); err != nil {
 		t.Fatalf("count manifests: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestCSN_DeleteAbsentNoBump(t *testing.T) {
 	idx := newMemoryIndex(t)
 	ctx := context.Background()
 
-	if err := idx.DeleteManifest(ctx, "sha256-deadbeef"); err != nil {
+	if err := idx.DeleteManifest(ctx, "deadbeef"); err != nil {
 		t.Fatalf("DeleteManifest(absent): %v", err)
 	}
 

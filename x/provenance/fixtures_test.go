@@ -1,6 +1,7 @@
 package provenance
 
 import (
+	"encoding/hex"
 	"sort"
 	"strings"
 	"testing"
@@ -31,7 +32,7 @@ func aid(c string) domain.ArtifactID { return domain.ArtifactID(strings.Repeat(c
 // core half, meaning in Ext. The base comes from manifestfx, so the fixture
 // carries a digest and blob ref like a real indexed manifest does.
 func production(child domain.ArtifactID, op string, outcome Outcome, repro bool, inputs ...Input) domain.Manifest {
-	m := manifestfx.Blob(string(child), "blob-"+string(child))
+	m := manifestfx.Blob(string(child), fxBlobRef(string(child)))
 
 	block := Block{V: SchemaVersion, Op: op, Outcome: outcome, Repro: repro}
 	refs := make([]domain.HandleRef, 0, len(inputs))
@@ -94,7 +95,11 @@ func mustPKey(t *testing.T, op string) string {
 // manifestfxBlobWithForeignExt is an origin: a valid indexed manifest carrying
 // someone else's Ext schema and no production record.
 func manifestfxBlobWithForeignExt(id domain.ArtifactID) domain.Manifest {
-	m := manifestfx.Blob(string(id), "blob-"+string(id))
+	m := manifestfx.Blob(string(id), fxBlobRef(string(id)))
 	m.Ext = []byte(`{"vfsmeta":{"path":"books/foo.pdf"}}`)
 	return m
 }
+
+// fxBlobRef derives a bare-hex blob ref from a fixture id: refs carry no
+// prefix (ADR-93) and the index stores them as raw bytes.
+func fxBlobRef(id string) string { return hex.EncodeToString([]byte(id)) }

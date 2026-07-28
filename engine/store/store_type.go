@@ -65,6 +65,24 @@ type store struct {
 	// State machine, guarded by stateMu.
 	stateMu sync.RWMutex
 	state   domain.StoreState
+
+	// indexComplete records that the index has been established, in THIS
+	// session, as a complete picture of the manifests on the Location:
+	// either it opened already populated, or recovery finished (ADR-118).
+	// The orphan sweep is gated on it — over an unproven index the sweep
+	// would delete the corpus. Deliberately session-scoped: a stored mark
+	// would assert something about the index that nothing can verify.
+	// Guarded by stateMu.
+	indexComplete bool
+
+	// recoverIndex is the recovery procedure supplied by the assembler
+	// (store.WithIndexRecovery); allowRecovery is the caller's explicit
+	// permission to rebuild an index that was supposed to survive
+	// (store.WithAllowIndexRecovery). Both are set at construction and
+	// never mutated: the deferred Unlock path needs them as much as open
+	// does, and that path has no options in hand.
+	recoverIndex  IndexRecoverer
+	allowRecovery bool
 	// lastConfigSeq is the store.config version this instance's
 	// activeConfig was loaded from. Owned by the open path, UpdateConfig
 	// and the liveness tick's freshness check (ADR-110, INV-110-7);

@@ -109,6 +109,13 @@ func OpenStore(ctx context.Context, drv driver.Driver, opts ...StoreOption) (Sto
 		return nil, err
 	}
 
+	// A store created Paranoid must not be reopened against an index
+	// that persists readable on disk — the config is authoritative and
+	// the index may differ from the one it was created with (ADR-56).
+	if err := guardIndexAtRest(active.ManifestCrypto, idx); err != nil {
+		return nil, wrap("", err)
+	}
+
 	// --- Branch on DEK protection state ---
 
 	if !desc.DEKEncrypted {
@@ -121,6 +128,9 @@ func OpenStore(ctx context.Context, drv driver.Driver, opts ...StoreOption) (Sto
 		s.sessionOverlay = overlay
 		s.lastConfigSeq = cfgSeq
 		s.crypto.PromoteResolverIfDefault()
+		if err := settleIndex(ctx, s, planIndexOpen(ctx, active.ManifestCrypto, idx, drv, o.allowRecovery)); err != nil {
+			return nil, wrap("", err)
+		}
 		if err := unlockBootstrap(ctx, s, o.publisher); err != nil {
 			return nil, wrap("", err)
 		}
@@ -188,6 +198,10 @@ func OpenStore(ctx context.Context, drv driver.Driver, opts ...StoreOption) (Sto
 	s.sessionOverlay = overlay
 	s.lastConfigSeq = cfgSeq
 	s.crypto.PromoteResolverIfDefault()
+	if err := settleIndex(ctx, s, planIndexOpen(ctx, active.ManifestCrypto, idx, drv, o.allowRecovery)); err != nil {
+		aead.Wipe(dek)
+		return nil, wrap("", err)
+	}
 	if err := unlockBootstrap(ctx, s, o.publisher); err != nil {
 		return nil, wrap("", err)
 	}

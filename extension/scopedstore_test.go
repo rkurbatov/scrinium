@@ -156,3 +156,8 @@ func TestScopedSystemStore_NilBacking(t *testing.T) {
 		t.Error("NewScopedSystemStore(nil backing): want error, got nil")
 	}
 }
+
+// PointerRef: these fakes never hold pointer artifacts.
+func (r *recordingSysStore) PointerRef(context.Context, string) (domain.ManifestDigest, bool, error) {
+	return "", false, nil
+}

@@ -95,7 +95,7 @@ func TestClassifyError_RealBusyContention(t *testing.T) {
 	// IndexManifest routes every write through observe → classifyError. With
 	// connection 1 holding the write lock, this write on conn 2 must hit
 	// SQLITE_BUSY and emerge as errs.ErrLeaseHeld.
-	err = idx2.IndexManifest(ctx, manifestfx.Blob("busy-art", "busy-blob"), manifestfx.PhysAddr("blobs/bb/uy/busy-blob"))
+	err = idx2.IndexManifest(ctx, manifestfx.Blob("busy-art", "b105ff01"), manifestfx.PhysAddr("blobs/bb/uy/busy-blob"))
 	if err == nil {
 		t.Fatal("IndexManifest on locked db: expected busy error, got nil")
 	}

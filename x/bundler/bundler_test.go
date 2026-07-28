@@ -101,11 +101,11 @@ func TestCustomIndex_RecordResolveDelete(t *testing.T) {
 	ctx := context.Background()
 	e, _ := newTestCustomIndex(t)
 
-	container := domain.Manifest{BlobRefs: []domain.BlobRef{"pack-blob-1"}}
+	container := domain.Manifest{BlobRefs: []domain.BlobRef{"fac0b10b0001"}}
 	entries := []PackedEntry{
 		{
 			ArtifactID:     "art-p1",
-			BlobRef:        "blob-p1",
+			BlobRef:        "b10b00f1",
 			ManifestOffset: 0,
 			ManifestSize:   200,
 			BlobOffset:     200,
@@ -114,7 +114,7 @@ func TestCustomIndex_RecordResolveDelete(t *testing.T) {
 		},
 		{
 			ArtifactID:     "art-p2",
-			BlobRef:        "blob-p2",
+			BlobRef:        "b10b00f2",
 			ManifestOffset: 1224,
 			ManifestSize:   200,
 			BlobOffset:     1424,
@@ -133,7 +133,7 @@ func TestCustomIndex_RecordResolveDelete(t *testing.T) {
 	if !ok {
 		t.Fatal("art-p1: expected found")
 	}
-	if ov.PackBlobRef != "pack-blob-1" {
+	if ov.PackBlobRef != "fac0b10b0001" {
 		t.Errorf("PackBlobRef: got %q, want pack-blob-1", ov.PackBlobRef)
 	}
 	if ov.ManifestOffset != 0 || ov.ManifestSize != 200 {
@@ -152,7 +152,7 @@ func TestCustomIndex_RecordResolveDelete(t *testing.T) {
 	}
 
 	// DeletePack drops every member of the volume.
-	if err := e.DeletePack(ctx, "pack-blob-1"); err != nil {
+	if err := e.DeletePack(ctx, "fac0b10b0001"); err != nil {
 		t.Fatalf("DeletePack: %v", err)
 	}
 	for _, id := range []domain.ArtifactID{"art-p1", "art-p2"} {
@@ -166,16 +166,16 @@ func TestCustomIndex_DeletePackIsVolumeScoped(t *testing.T) {
 	ctx := context.Background()
 	e, _ := newTestCustomIndex(t)
 
-	if err := e.RecordPack(ctx, domain.Manifest{BlobRefs: []domain.BlobRef{"vol-A"}},
+	if err := e.RecordPack(ctx, domain.Manifest{BlobRefs: []domain.BlobRef{"4010a0"}},
 		[]PackedEntry{{ArtifactID: "a1", BlobSize: 1}}); err != nil {
 		t.Fatalf("RecordPack vol-A: %v", err)
 	}
-	if err := e.RecordPack(ctx, domain.Manifest{BlobRefs: []domain.BlobRef{"vol-B"}},
+	if err := e.RecordPack(ctx, domain.Manifest{BlobRefs: []domain.BlobRef{"4010b0"}},
 		[]PackedEntry{{ArtifactID: "b1", BlobSize: 1}}); err != nil {
 		t.Fatalf("RecordPack vol-B: %v", err)
 	}
 
-	if err := e.DeletePack(ctx, "vol-A"); err != nil {
+	if err := e.DeletePack(ctx, "4010a0"); err != nil {
 		t.Fatalf("DeletePack vol-A: %v", err)
 	}
 	if _, ok, _ := e.ResolvePacked(ctx, "a1"); ok {

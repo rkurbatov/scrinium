@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"testing"
 	"time"
@@ -686,9 +687,12 @@ func TestIndex_ListCustomIndexes_Empty(t *testing.T) {
 
 func makeBlobManifest(id domain.ArtifactID) domain.Manifest {
 	return domain.Manifest{
-		ArtifactID:   id,
-		BlobRefs:     []domain.BlobRef{"sha256-aaaa"},
-		ContentHash:  "sha256-aaaa",
+		ArtifactID: id,
+		// manifest_digest is the primary key and never empty in production;
+		// derive one from the id so two fixtures never collide.
+		Digest:       domain.ManifestDigest(hex.EncodeToString([]byte(id))),
+		BlobRefs:     []domain.BlobRef{"aaaa"},
+		ContentHash:  "aaaa",
 		OriginalSize: 100,
 		CreatedAt:    time.Now().UTC(),
 		LayoutHeader: domain.LayoutHeader{BlobStorage: domain.LayoutTarget},

@@ -38,7 +38,7 @@ func (i *Index) applyIndexers(ctx context.Context, tx *sql.Tx, m domain.Manifest
 	if len(idxs) == 0 {
 		return nil
 	}
-	digest := string(m.Digest)
+	digest := hexKey(m.Digest)
 	for _, ci := range idxs {
 		name := ci.Name()
 		sub := newSqliteSubstrate(name)
@@ -86,7 +86,7 @@ func (i *Index) applyUnindexers(ctx context.Context, tx *sql.Tx, m domain.Manife
 // since the write (no orphan rows). An index's OWN tables (Substrate, §9.7) are
 // cleaned by Unindex (applyUnindexers, wired in deleteManifestTx). proj_ext delete
 // needs only the digest, so it is handled here.
-func deleteProjections(ctx context.Context, tx *sql.Tx, digest string) error {
+func deleteProjections(ctx context.Context, tx *sql.Tx, digest hexKey) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM proj_ext WHERE manifest_digest = ?`, digest); err != nil {
 		return fmt.Errorf("delete proj_ext: %w", err)
 	}
@@ -95,7 +95,7 @@ func deleteProjections(ctx context.Context, tx *sql.Tx, digest string) error {
 
 // --- proj_* row writers ---
 
-func upsertProjExt(ctx context.Context, tx *sql.Tx, digest, extName, field, value string) error {
+func upsertProjExt(ctx context.Context, tx *sql.Tx, digest hexKey, extName, field, value string) error {
 	_, err := tx.ExecContext(ctx,
 		`INSERT OR REPLACE INTO proj_ext (manifest_digest, ext_name, field, value) VALUES (?, ?, ?, ?)`,
 		digest, extName, field, value)
