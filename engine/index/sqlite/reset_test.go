@@ -20,10 +20,12 @@ func resetFixture(t *testing.T, idx *Index) {
 	t.Helper()
 	ctx := context.Background()
 
-	insertBlob(t, idx, "aabbccdd", "sha256-aabbccdd", 128,
+	// Keys are bare hex (ADR-93): the index stores them as raw bytes, so a
+	// fixture value with an algorithm prefix would not fit the column.
+	insertBlob(t, idx, "aabbccdd", "aabbccdd11", 128,
 		domain.PhysicalAddress{Path: "blobs/aa/bb/aabbccdd"}, 2)
 	insertManifest(t, idx, domain.Manifest{
-		Digest:       "sha256-1111111111",
+		Digest:       "1111111111",
 		ArtifactID:   "artifact-1",
 		LayoutHeader: domain.LayoutHeader{BlobStorage: domain.LayoutInline},
 	})
@@ -35,11 +37,11 @@ func resetFixture(t *testing.T, idx *Index) {
 		}
 	}
 	exec(`INSERT INTO manifest_blobs (manifest_digest, blob_ref, position) VALUES (?, ?, 0)`,
-		"sha256-1111111111", "aabbccdd")
+		hexKey("1111111111"), hexKey("aabbccdd"))
 	exec(`INSERT INTO manifest_handles (manifest_digest, handle_ref, position) VALUES (?, ?, 0)`,
-		"sha256-1111111111", "artifact-0")
+		hexKey("1111111111"), "artifact-0")
 	exec(`INSERT INTO proj_ext (manifest_digest, ext_name, field, value) VALUES (?, 'librarium', 'kind', 'origin')`,
-		"sha256-1111111111")
+		hexKey("1111111111"))
 	exec(`INSERT INTO ext_data (extension, table_name, key, value) VALUES ('provenance', 'edges', 'k', X'00')`)
 	exec(`INSERT INTO ext_meta (extension, schema_version, registered_at) VALUES ('provenance', 1, '2026-07-25T00:00:00Z')`)
 }

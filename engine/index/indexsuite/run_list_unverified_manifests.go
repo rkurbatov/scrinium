@@ -15,7 +15,7 @@ func runListUnverifiedManifests(t *testing.T, f Factory) {
 	t.Run("FreshlyIndexedManifestIsUnverified", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "blob-1"), manifestfx.PhysAddr("p")); err != nil {
+		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "b10b0001"), manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
 		got := collectUnverifiedManifests(t, idx, time.Now())
@@ -41,7 +41,7 @@ func runListUnverifiedManifests(t *testing.T, f Factory) {
 	t.Run("MarkManifestVerifiedRemovesFromList", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "blob-1"), manifestfx.PhysAddr("p")); err != nil {
+		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "b10b0001"), manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
 		verifiedAt := time.Now().UTC().Truncate(time.Second)
@@ -63,7 +63,7 @@ func runListUnverifiedManifests(t *testing.T, f Factory) {
 	t.Run("MarkManifestVerifiedMissingIsNoOp", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		if err := idx.MarkManifestVerified(ctx, "nonexistent", time.Now()); err != nil {
+		if err := idx.MarkManifestVerified(ctx, "0e0e0e0e", time.Now()); err != nil {
 			t.Errorf("missing manifest must be no-op, got %v", err)
 		}
 	})
@@ -71,7 +71,7 @@ func runListUnverifiedManifests(t *testing.T, f Factory) {
 	t.Run("PackManifestsExcluded", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "blob-1"), manifestfx.PhysAddr("p")); err != nil {
+		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "b10b0001"), manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
 		got := collectUnverifiedManifests(t, idx, time.Now())

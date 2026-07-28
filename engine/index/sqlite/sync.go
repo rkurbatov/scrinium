@@ -49,7 +49,7 @@ func (i *Index) Since(ctx context.Context, cursor index.Token) (index.Delta, err
 			digest string
 			csn    uint64
 		)
-		if err := rows.Scan(&digest, &csn); err != nil {
+		if err := rows.Scan(hexOut{dst: &digest}, &csn); err != nil {
 			_ = rows.Close()
 			return index.Delta{}, fmt.Errorf("sqlite: Since: scan: %w", err)
 		}
@@ -127,7 +127,7 @@ func (i *Index) ManifestByDigest(ctx context.Context, digest domain.ManifestDige
 			WHERE m.manifest_digest = ? AND m.artifact_id IS NOT NULL
 			LIMIT 1`
 
-	rows, err := i.db.QueryContext(ctx, query, string(digest))
+	rows, err := i.db.QueryContext(ctx, query, hexKey(digest))
 	if err != nil {
 		return domain.Manifest{}, false, classifyError(err)
 	}

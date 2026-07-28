@@ -93,7 +93,7 @@ func TestMarshalBodyJSON_OmitsKeyIDWhenEmpty(t *testing.T) {
 // digest, by contrast, is the file's hash and is never in the body.
 func TestMarshalBodyJSON_ArtifactIDInBody(t *testing.T) {
 	m := localManifest()
-	m.ArtifactID = domain.ArtifactID("sha256-deadbeef")
+	m.ArtifactID = domain.ArtifactID("deadbeef")
 
 	bs, _ := marshalBodyJSON(m)
 	if !bytes.Contains(bs, []byte("artifact_id")) || !bytes.Contains(bs, []byte("deadbeef")) {

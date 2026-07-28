@@ -116,7 +116,7 @@ func TestBackfill_FastPath_FallsBackOnMiss(t *testing.T) {
 	idHit := domain.ArtifactID("hit")
 	src.Add(domain.Manifest{
 		ArtifactID:   idHit,
-		BlobRefs:     []domain.BlobRef{"sha256-hit"},
+		BlobRefs:     []domain.BlobRef{"31700000"},
 		OriginalSize: 1,
 		CreatedAt:    time.Now().UTC(),
 		LayoutHeader: domain.LayoutHeader{BlobStorage: domain.LayoutTarget},
@@ -130,7 +130,7 @@ func TestBackfill_FastPath_FallsBackOnMiss(t *testing.T) {
 	idMiss := domain.ArtifactID("miss")
 	src.Add(domain.Manifest{
 		ArtifactID:   idMiss,
-		BlobRefs:     []domain.BlobRef{"sha256-miss"},
+		BlobRefs:     []domain.BlobRef{"11550000"},
 		OriginalSize: 1,
 		CreatedAt:    time.Now().UTC(),
 		LayoutHeader: domain.LayoutHeader{BlobStorage: domain.LayoutTarget},

@@ -44,11 +44,11 @@ func TestEscapeSQLString(t *testing.T) {
 // with a quoted destination.
 func TestWriteCheckpoint_PathWithSingleQuote(t *testing.T) {
 	idx, _ := newDiskIndex(t)
-	insertBlob(t, idx, "blob-1", "sha256-"+strings.Repeat("a", 64), 1024,
+	insertBlob(t, idx, "b10b0001", strings.Repeat("a", 64), 1024,
 		domain.PhysicalAddress{Path: "p"}, 1)
 	insertManifest(t, idx, domain.Manifest{
 		ArtifactID: "art-1",
-		BlobRefs:   []domain.BlobRef{"blob-1"}, CreatedAt: time.Now(),
+		BlobRefs:   []domain.BlobRef{"b10b0001"}, CreatedAt: time.Now(),
 	})
 
 	dest := filepath.Join(t.TempDir(), "o'brien.db")

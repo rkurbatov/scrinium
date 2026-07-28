@@ -324,8 +324,8 @@ func TestEncode_TooManyRefs(t *testing.T) {
 func TestEncodeDecode_PipelineMultiStageRoundTrip(t *testing.T) {
 	m := artifactfx.Manifest(func(m *domain.Manifest) {
 		m.Pipeline = []domain.PipelineStage{
-			{Algorithm: "zstd", Hash: "sha256-cccc"},
-			{Algorithm: "aes-gcm", Hash: "sha256-dddd", IV: []byte{1, 2, 3, 4}, KeyID: "tenant-42"},
+			{Algorithm: "zstd", Hash: "cccc"},
+			{Algorithm: "aes-gcm", Hash: "dddd", IV: []byte{1, 2, 3, 4}, KeyID: "tenant-42"},
 		}
 	})
 	b, err := artifact.Encode(m, config.ManifestEncodingJSON, config.ManifestCryptoPlain)

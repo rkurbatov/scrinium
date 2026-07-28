@@ -26,7 +26,7 @@ func runManifestExists(t *testing.T, f Factory) {
 	t.Run("AfterIndex_ReturnsTrue", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		m := manifestfx.Blob("art-1", "blob-1")
+		m := manifestfx.Blob("art-1", "b10b0001")
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
@@ -42,7 +42,7 @@ func runManifestExists(t *testing.T, f Factory) {
 	t.Run("AfterDelete_ReturnsFalse", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		m := manifestfx.Blob("art-2", "blob-2")
+		m := manifestfx.Blob("art-2", "b10b0002")
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
@@ -61,7 +61,7 @@ func runManifestExists(t *testing.T, f Factory) {
 	t.Run("DistinguishesIDs", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		m := manifestfx.Blob("art-known", "blob-known")
+		m := manifestfx.Blob("art-known", "b10b0c0a")
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
@@ -87,11 +87,11 @@ func runManifestExists(t *testing.T, f Factory) {
 		// not the blobs-table. Probe with a blob_ref-shaped
 		// string that is NOT an ArtifactID.
 		idx := f.New(t)
-		m := manifestfx.Blob("art-real", "blob-real")
+		m := manifestfx.Blob("art-real", "b10b4ea1")
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
-		_, exists, err := idx.ResolveManifestDigest(ctx, "blob-real")
+		_, exists, err := idx.ResolveManifestDigest(ctx, "b10b4ea1")
 		if err != nil {
 			t.Fatal(err)
 		}

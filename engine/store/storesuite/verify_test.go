@@ -157,7 +157,7 @@ func TestVerify_NotFound(t *testing.T) {
 		id   domain.ArtifactID
 	}{
 		{"empty id", ""},
-		{"unknown id", domain.ArtifactID("sha256-deadbeef")},
+		{"unknown id", domain.ArtifactID("deadbeef")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -191,7 +191,7 @@ func TestVerify_CancelledContext(t *testing.T) {
 	s := storefx.Init(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := s.Verify(ctx, domain.ArtifactID("sha256-deadbeef")); !errors.Is(err, context.Canceled) {
+	if err := s.Verify(ctx, domain.ArtifactID("deadbeef")); !errors.Is(err, context.Canceled) {
 		t.Errorf("got %v, want context.Canceled", err)
 	}
 }

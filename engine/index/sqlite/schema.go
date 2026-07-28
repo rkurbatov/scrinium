@@ -71,7 +71,14 @@ type migration struct {
 //     reports Gapped
 //
 // Notes on types:
-//   - All hashes and refs are TEXT (the project format is
+//   - Hash-shaped keys (manifest_digest, blob_ref, content_hash) are BLOB: the raw bytes of what the domain spells in hex.
+//     The index is a derived cache and owes nobody a readable form, and the
+//     halved key shows up twice over — once in the row, once in every index
+//     that copies it. artifact_id and handle_ref stay TEXT: both are handles
+//     in the "<algo>-<hex>" form, so they carry a prefix and are not bare
+//     hex. Conversion lives at the SQL
+//     boundary (keys.go), never in the domain types.
+//   - Other refs are TEXT (the project format is
 //     "<algo>-<hex>", typically <100 chars).
 //   - Sizes and offsets are INTEGER (SQLite INTEGER is 64-bit).
 //   - Timestamps are TEXT in RFC 3339 second precision (UTC) — the
@@ -102,8 +109,8 @@ type migration struct {
 // verbatim).
 const schemaBaseline = `
 CREATE TABLE blobs (
-    blob_ref          TEXT    PRIMARY KEY,
-    content_hash      TEXT    NOT NULL,
+    blob_ref          BLOB    PRIMARY KEY,
+    content_hash      BLOB    NOT NULL,
     original_size     INTEGER NOT NULL,
     physical_path     TEXT    NOT NULL,
     crypto_identity   TEXT    NOT NULL DEFAULT '',
@@ -117,10 +124,10 @@ CREATE INDEX blobs_orphan  ON blobs(ref_count) WHERE ref_count = 0;
 CREATE INDEX blobs_scrub   ON blobs(last_verified_at);
 
 CREATE TABLE manifests (
-    manifest_digest  TEXT    PRIMARY KEY,
+    manifest_digest  BLOB    PRIMARY KEY,
     artifact_id      TEXT,
     session_id       TEXT    NOT NULL DEFAULT '',
-    blob_ref         TEXT,
+    blob_ref         BLOB,
     created_at       TEXT    NOT NULL,
     retention_until  TEXT,
     last_verified_at TEXT,
@@ -136,8 +143,8 @@ CREATE INDEX manifests_scrub     ON manifests(last_verified_at);
 CREATE INDEX manifests_csn       ON manifests(csn);
 
 CREATE TABLE manifest_blobs (
-    manifest_digest TEXT    NOT NULL,
-    blob_ref        TEXT    NOT NULL,
+    manifest_digest BLOB    NOT NULL,
+    blob_ref        BLOB    NOT NULL,
     position        INTEGER NOT NULL,
     PRIMARY KEY (manifest_digest, position)
 ) WITHOUT ROWID;
@@ -145,7 +152,7 @@ CREATE TABLE manifest_blobs (
 CREATE INDEX manifest_blobs_blob ON manifest_blobs(blob_ref);
 
 CREATE TABLE manifest_handles (
-    manifest_digest TEXT    NOT NULL,
+    manifest_digest BLOB    NOT NULL,
     handle_ref      TEXT    NOT NULL,
     position        INTEGER NOT NULL,
     PRIMARY KEY (manifest_digest, position)
@@ -173,7 +180,7 @@ CREATE TABLE ext_data (
 -- extension's Indexer, in the manifest transaction; the core does not
 -- branch on manifest type.
 CREATE TABLE proj_ext (
-    manifest_digest TEXT NOT NULL,
+    manifest_digest BLOB NOT NULL,
     ext_name  TEXT    NOT NULL,
     field     TEXT    NOT NULL,
     value     TEXT    NOT NULL,

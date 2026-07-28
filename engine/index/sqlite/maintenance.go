@@ -20,7 +20,7 @@ import (
 func (i *Index) MarkVerified(ctx context.Context, blobRef string, timestamp time.Time) error {
 	return i.observe("MarkVerified", func() error {
 		const stmt = `UPDATE blobs SET last_verified_at = ? WHERE blob_ref = ?`
-		_, err := i.db.ExecContext(ctx, stmt, timefmt.Format(timestamp), blobRef)
+		_, err := i.db.ExecContext(ctx, stmt, timefmt.Format(timestamp), hexKey(blobRef))
 		return err
 	})
 }
@@ -52,7 +52,7 @@ func (i *Index) DeleteOrphanBlob(ctx context.Context, blobRef string) (bool, err
 	var removed bool
 	err := i.observe("DeleteOrphanBlob", func() error {
 		const stmt = `DELETE FROM blobs WHERE blob_ref = ? AND ref_count = 0`
-		res, err := i.db.ExecContext(ctx, stmt, blobRef)
+		res, err := i.db.ExecContext(ctx, stmt, hexKey(blobRef))
 		if err != nil {
 			return err
 		}

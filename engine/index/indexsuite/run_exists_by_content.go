@@ -13,7 +13,7 @@ func runExistsByContent(t *testing.T, f Factory) {
 		ctx := t.Context()
 		idx := f.New(t)
 		hash := manifestfx.SyntheticHash('a')
-		m := manifestfx.BlobWithHash("art-1", "blob-1", hash, 1024)
+		m := manifestfx.BlobWithHash("art-1", "b10b0001", hash, 1024)
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("blobs/blob-1")); err != nil {
 			t.Fatalf("IndexManifest: %v", err)
 		}
@@ -25,15 +25,15 @@ func runExistsByContent(t *testing.T, f Factory) {
 		if !ok {
 			t.Fatal("expected found")
 		}
-		if ref != "blob-1" {
-			t.Errorf("ref: got %q, want %q", ref, "blob-1")
+		if ref != "b10b0001" {
+			t.Errorf("ref: got %q, want %q", ref, "b10b0001")
 		}
 	})
 
 	t.Run("Miss", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		ref, ok, err := idx.ExistsByContent(ctx, "sha256-deadbeef", 999, "")
+		ref, ok, err := idx.ExistsByContent(ctx, "deadbeef", 999, "")
 		if err != nil {
 			t.Fatalf("ExistsByContent: %v", err)
 		}
@@ -52,7 +52,7 @@ func runExistsByContent(t *testing.T, f Factory) {
 		// not matches.
 		idx := f.New(t)
 		hash := manifestfx.SyntheticHash('x')
-		m := manifestfx.BlobWithHash("art-1k", "blob-1k", hash, 1024)
+		m := manifestfx.BlobWithHash("art-1k", "b10b001c", hash, 1024)
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p1")); err != nil {
 			t.Fatal(err)
 		}
@@ -72,8 +72,8 @@ func runExistsByContent(t *testing.T, f Factory) {
 		hash := manifestfx.SyntheticHash('c')
 		// Same plaintext (hash,size) but two distinct crypto
 		// identities must be two independent rows — ADR-58.
-		mPlain := manifestfx.BlobWithHash("art-plain", "blob-plain", hash, 2048)
-		mEnc := manifestfx.EncryptedBlobWithHash("art-enc", "blob-enc", hash, 2048, "aes-gcm", "k1")
+		mPlain := manifestfx.BlobWithHash("art-plain", "b10b71a0", hash, 2048)
+		mEnc := manifestfx.EncryptedBlobWithHash("art-enc", "b10b0ec0", hash, 2048, "aes-gcm", "k1")
 		if err := idx.IndexManifest(ctx, mPlain, manifestfx.PhysAddr("p-plain")); err != nil {
 			t.Fatal(err)
 		}
@@ -83,12 +83,12 @@ func runExistsByContent(t *testing.T, f Factory) {
 
 		// Plain probe finds only the plain blob.
 		ref, ok, err := idx.ExistsByContent(ctx, hash, 2048, "")
-		if err != nil || !ok || ref != "blob-plain" {
+		if err != nil || !ok || ref != "b10b71a0" {
 			t.Fatalf("plain probe: ref=%q ok=%v err=%v", ref, ok, err)
 		}
 		// Encrypted probe finds only the encrypted blob.
 		ref, ok, err = idx.ExistsByContent(ctx, hash, 2048, "aes-gcm/k1")
-		if err != nil || !ok || ref != "blob-enc" {
+		if err != nil || !ok || ref != "b10b0ec0" {
 			t.Fatalf("encrypted probe: ref=%q ok=%v err=%v", ref, ok, err)
 		}
 		// A different KeyID is a miss — never collapses.

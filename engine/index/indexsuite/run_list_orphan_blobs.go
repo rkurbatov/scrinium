@@ -24,10 +24,10 @@ func runListOrphanBlobs(t *testing.T, f Factory) {
 			fillChar byte
 			deleted  bool
 		}{
-			{"live-1", "blob-l1", 'a', false},
-			{"orph-1", "blob-o1", 'b', true},
-			{"orph-2", "blob-o2", 'c', true},
-			{"live-2", "blob-l2", 'd', false},
+			{"live-1", "b10b0c01", 'a', false},
+			{"orph-1", "b10b0f01", 'b', true},
+			{"orph-2", "b10b0f02", 'c', true},
+			{"live-2", "b10b0c02", 'd', false},
 		}
 		for _, s := range stage {
 			m := manifestfx.BlobWithHash(s.id, s.ref, manifestfx.SyntheticHash(s.fillChar), 1024)
@@ -56,7 +56,7 @@ func runListOrphanBlobs(t *testing.T, f Factory) {
 		for _, ref := range got {
 			seen[ref] = true
 		}
-		if !seen["blob-o1"] || !seen["blob-o2"] {
+		if !seen["b10b0f01"] || !seen["b10b0f02"] {
 			t.Errorf("expected both orphans, got %v", got)
 		}
 	})
@@ -67,7 +67,8 @@ func runListOrphanBlobs(t *testing.T, f Factory) {
 		for i := 0; i < 5; i++ {
 			fillChar := byte('a' + i)
 			id := "art-" + string(fillChar)
-			ref := "blob-" + string(fillChar)
+			// Even length: a hex key is bytes, and one nibble is not a byte.
+			ref := "b10b000" + string(fillChar)
 			m := manifestfx.BlobWithHash(id, ref, manifestfx.SyntheticHash(fillChar), 1024)
 			if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p/"+ref)); err != nil {
 				t.Fatal(err)

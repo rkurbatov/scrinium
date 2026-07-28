@@ -28,7 +28,7 @@ func TestTransformerRegistry_RegisterAndGet(t *testing.T) {
 
 func TestTransformerRegistry_UnsupportedAlgorithm(t *testing.T) {
 	r := NewTransformerRegistry()
-	_, err := r.Get("nonexistent")
+	_, err := r.Get("0e0e0e0e")
 	if !errors.Is(err, errs.ErrUnsupportedAlgorithm) {
 		t.Fatalf("expected errs.ErrUnsupportedAlgorithm, got %v", err)
 	}

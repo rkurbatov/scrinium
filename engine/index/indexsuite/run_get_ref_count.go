@@ -14,12 +14,12 @@ func runGetRefCount(t *testing.T, f Factory) {
 	t.Run("Basic", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		m := manifestfx.Blob("art-1", "blob-1")
+		m := manifestfx.Blob("art-1", "b10b0001")
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
 
-		n, err := idx.GetRefCount(ctx, "blob-1")
+		n, err := idx.GetRefCount(ctx, "b10b0001")
 		if err != nil {
 			t.Fatalf("GetRefCount: %v", err)
 		}
@@ -31,7 +31,7 @@ func runGetRefCount(t *testing.T, f Factory) {
 	t.Run("Missing", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		_, err := idx.GetRefCount(ctx, "nonexistent")
+		_, err := idx.GetRefCount(ctx, "0e0e0e0e")
 		if !errors.Is(err, errs.ErrArtifactNotFound) {
 			t.Fatalf("expected errs.ErrArtifactNotFound, got %v", err)
 		}
@@ -43,7 +43,7 @@ func runGetRefCount(t *testing.T, f Factory) {
 		// latter is a legitimate orphan kept for the GC reaper
 		// to process. Reach it through Index → Delete.
 		idx := f.New(t)
-		m := manifestfx.Blob("art-1", "blob-1")
+		m := manifestfx.Blob("art-1", "b10b0001")
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
@@ -51,7 +51,7 @@ func runGetRefCount(t *testing.T, f Factory) {
 			t.Fatal(err)
 		}
 
-		n, err := idx.GetRefCount(ctx, "blob-1")
+		n, err := idx.GetRefCount(ctx, "b10b0001")
 		if err != nil {
 			t.Fatalf("GetRefCount: %v", err)
 		}

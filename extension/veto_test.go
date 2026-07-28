@@ -112,7 +112,7 @@ func TestScopedVeto_ExternalRefProposedNil(t *testing.T) {
 
 	if err := s.Put(context.Background(), systemstore.NamedArtifact{
 		Name:        "ref",
-		ExternalRef: domain.ManifestDigest("sha256-abc"),
+		ExternalRef: domain.ManifestDigest("abc00000"),
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}

@@ -15,7 +15,7 @@ func runIndexManifest(t *testing.T, f Factory) {
 	t.Run("Blob_FreshInsert", func(t *testing.T) {
 		ctx := t.Context()
 		idx := f.New(t)
-		m := manifestfx.Blob("art-1", "blob-1")
+		m := manifestfx.Blob("art-1", "b10b0001")
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 			t.Fatalf("IndexManifest: %v", err)
 		}
@@ -32,7 +32,7 @@ func runIndexManifest(t *testing.T, f Factory) {
 			t.Errorf("ResolveManifestDigest: got digest %q, want %q", digest, m.Digest)
 		}
 		// Blob has a ref.
-		n, err := idx.GetRefCount(ctx, "blob-1")
+		n, err := idx.GetRefCount(ctx, "b10b0001")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -40,24 +40,24 @@ func runIndexManifest(t *testing.T, f Factory) {
 			t.Errorf("ref_count: got %d, want 1", n)
 		}
 		// Blob is resolvable.
-		if _, err := idx.Resolve(ctx, "blob-1"); err != nil {
+		if _, err := idx.Resolve(ctx, "b10b0001"); err != nil {
 			t.Errorf("Resolve after Index: %v", err)
 		}
 	})
 
-	t.Run("Blob_Dedup", func(t *testing.T) {
+	t.Run("b10b0ded0f", func(t *testing.T) {
 		ctx := t.Context()
 		// Two distinct artifacts referencing the same blob —
 		// blob row stays single, ref_count climbs to 2.
 		idx := f.New(t)
 		addr := manifestfx.PhysAddr("blobs/aa/bb/blob-1")
-		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "blob-1"), addr); err != nil {
+		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "b10b0001"), addr); err != nil {
 			t.Fatal(err)
 		}
-		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-2", "blob-1"), addr); err != nil {
+		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-2", "b10b0001"), addr); err != nil {
 			t.Fatal(err)
 		}
-		n, err := idx.GetRefCount(ctx, "blob-1")
+		n, err := idx.GetRefCount(ctx, "b10b0001")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -73,7 +73,7 @@ func runIndexManifest(t *testing.T, f Factory) {
 		// invariant; ref_count behaviour on retries is an
 		// implementation detail covered by the per-backend tests.
 		idx := f.New(t)
-		m := manifestfx.Blob("art-1", "blob-1")
+		m := manifestfx.Blob("art-1", "b10b0001")
 		if err := idx.IndexManifest(ctx, m, manifestfx.PhysAddr("p")); err != nil {
 			t.Fatal(err)
 		}
@@ -100,9 +100,9 @@ func runIndexManifest(t *testing.T, f Factory) {
 			ref  string
 			hash domain.ContentHash
 		}{
-			{"chunk-a", manifestfx.SyntheticHash('a')},
-			{"chunk-b", manifestfx.SyntheticHash('b')},
-			{"chunk-c", manifestfx.SyntheticHash('c')},
+			{"c40a0001", manifestfx.SyntheticHash('a')},
+			{"c40b0002", manifestfx.SyntheticHash('b')},
+			{"c40c0003", manifestfx.SyntheticHash('c')},
 		}
 		// Register chunks as blobs first, each via its own
 		// IndexManifest call. The manifest is artificial — what
@@ -122,6 +122,7 @@ func runIndexManifest(t *testing.T, f Factory) {
 
 		toc := domain.Manifest{
 			ArtifactID:   "art-toc",
+			Digest:       domain.ManifestDigest("70c0000000000000000000000000000000000000000000000000000000000001"),
 			Ext:          json.RawMessage(`{"composite":true}`),
 			ContentHash:  manifestfx.SyntheticHash('0'),
 			BlobRefs:     []domain.BlobRef{domain.BlobRef(chunks[0].ref), domain.BlobRef(chunks[1].ref), domain.BlobRef(chunks[2].ref)},

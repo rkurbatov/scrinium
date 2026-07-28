@@ -493,8 +493,9 @@ func TestLifecycle_FullDiskRoundTrip(t *testing.T) {
 	addr := domain.PhysicalAddress{Path: "blobs/aa/bb/blob-test"}
 	manifest := domain.Manifest{
 		ArtifactID:   "art-test",
-		ContentHash:  "sha256-" + domain.ContentHash("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
-		BlobRefs:     []domain.BlobRef{"blob-test"},
+		Digest:       domain.ManifestDigest("a47e57000000000000000000000000000000000000000000000000000000dead"),
+		ContentHash:  domain.ContentHash("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+		BlobRefs:     []domain.BlobRef{"b10b7e57"},
 		OriginalSize: 1024,
 	}
 	if err := idx1.IndexManifest(ctx, manifest, addr); err != nil {
@@ -541,7 +542,7 @@ func TestLifecycle_FullDiskRoundTrip(t *testing.T) {
 		t.Errorf("ContentHasher changed across reopen: %q -> %q", cfg1.ContentHasher, cfg2.ContentHasher)
 	}
 
-	gotAddr, err := idx2.Resolve(ctx, "blob-test")
+	gotAddr, err := idx2.Resolve(ctx, "b10b7e57")
 	if err != nil {
 		t.Fatalf("Resolve after reopen: %v", err)
 	}

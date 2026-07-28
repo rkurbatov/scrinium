@@ -28,7 +28,7 @@ func runSyncSource(t *testing.T, f Factory) {
 		idx := f.New(t)
 		ss := idx.(index.SyncSource)
 
-		m := manifestfx.Blob("art-1", "blob-1")
+		m := manifestfx.Blob("art-1", "b10b0001")
 
 		t0, err := ss.Token(ctx)
 		if err != nil {
@@ -41,7 +41,7 @@ func runSyncSource(t *testing.T, f Factory) {
 		if err != nil {
 			t.Fatalf("Token: %v", err)
 		}
-		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-2", "blob-2"),
+		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-2", "b10b0002"),
 			manifestfx.PhysAddr("blobs/cc/dd/blob-2")); err != nil {
 			t.Fatalf("IndexManifest #2: %v", err)
 		}
@@ -66,8 +66,8 @@ func runSyncSource(t *testing.T, f Factory) {
 		if err != nil {
 			t.Fatalf("Token: %v", err)
 		}
-		m1 := manifestfx.Blob("art-1", "blob-1")
-		m2 := manifestfx.Blob("art-2", "blob-2")
+		m1 := manifestfx.Blob("art-1", "b10b0001")
+		m2 := manifestfx.Blob("art-2", "b10b0002")
 		if err := idx.IndexManifest(ctx, m1, manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 			t.Fatal(err)
 		}
@@ -121,8 +121,8 @@ func runSyncSource(t *testing.T, f Factory) {
 		if err != nil {
 			t.Fatalf("Token: %v", err)
 		}
-		m1 := manifestfx.Blob("art-1", "blob-1")
-		m2 := manifestfx.Blob("art-2", "blob-2")
+		m1 := manifestfx.Blob("art-1", "b10b0001")
+		m2 := manifestfx.Blob("art-2", "b10b0002")
 		if err := idx.IndexManifest(ctx, m1, manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 			t.Fatal(err)
 		}
@@ -187,7 +187,7 @@ func runSyncSource(t *testing.T, f Factory) {
 		if err != nil {
 			t.Fatalf("Token: %v", err)
 		}
-		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "blob-1"),
+		if err := idx.IndexManifest(ctx, manifestfx.Blob("art-1", "b10b0001"),
 			manifestfx.PhysAddr("blobs/aa/bb/blob-1")); err != nil {
 			t.Fatalf("IndexManifest: %v", err)
 		}
